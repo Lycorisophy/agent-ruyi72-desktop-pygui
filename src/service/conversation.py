@@ -7,6 +7,7 @@ from pathlib import Path
 from src.agent.react import run_react
 from src.config import LLMConfig, RuyiConfig
 from src.llm.ollama import OllamaClient, OllamaClientError
+from src.llm.prompts import build_system_block
 from src.skills.loader import build_safe_skills_prompt, get_registry
 from src.storage.session_store import Mode, SessionMeta, SessionStore
 
@@ -125,12 +126,15 @@ class ConversationService:
             return False, f"工作区不存在或不是目录: {root}", True
 
         if self._meta.mode == "chat":
-            # 对话模式：在每次调用前临时注入 safe 技能目录作为 system 提示，不写入历史。
-            call_messages = list(self._messages)
-            call_messages.append({"role": "user", "content": text})
+            # 对话模式：在每次调用前临时注入固定 system 提示 + safe 技能目录，不写入历史。
             skills_prompt = build_safe_skills_prompt()
-            if skills_prompt:
-                call_messages = [{"role": "system", "content": skills_prompt}] + call_messages
+            system_block = build_system_block(extra_system=skills_prompt or None)
+
+            call_messages: list[dict[str, str]] = [
+                {"role": "system", "content": system_block}
+            ]
+            call_messages.extend(self._messages)
+            call_messages.append({"role": "user", "content": text})
 
             try:
                 reply = OllamaClient(self._llm).chat(call_messages)

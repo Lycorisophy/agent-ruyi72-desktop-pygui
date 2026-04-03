@@ -13,6 +13,7 @@ from langgraph.errors import GraphRecursionError
 from src.agent.tools import tool_list_dir, tool_read_file, tool_run_shell
 from src.config import LLMConfig
 from src.llm.chat_model import chat_model_from_config
+from src.llm.prompts import build_system_block
 from src.skills.loader import build_react_skills_block, get_registry
 
 
@@ -147,7 +148,11 @@ def run_react(
     llm = chat_model_from_config(llm_cfg)
     tools = _make_tools(workspace)
     skills_block = build_react_skills_block()
-    system_prompt = _REACT_SYSTEM.format(workspace=workspace, skills_block=skills_block or "（当前未发现任何技能定义）")
+    react_system = _REACT_SYSTEM.format(
+        workspace=workspace,
+        skills_block=skills_block or "（当前未发现任何技能定义）",
+    )
+    system_prompt = build_system_block(extra_system=react_system)
 
     agent = create_agent(
         llm,
