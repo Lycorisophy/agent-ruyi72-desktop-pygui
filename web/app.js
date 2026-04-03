@@ -54,6 +54,44 @@ function setBusy(busy) {
   send.disabled = busy;
 }
 
+function setGlobalLoading(show) {
+  const node = document.getElementById("global-loading");
+  if (!node) return;
+  node.classList.toggle("hidden", !show);
+  node.setAttribute("aria-hidden", show ? "false" : "true");
+}
+
+function openMemoryModal() {
+  const overlay = document.getElementById("memory-modal-overlay");
+  const ta = document.getElementById("memory-input");
+  const cancel = document.getElementById("memory-cancel");
+  const confirm = document.getElementById("memory-confirm");
+  if (!overlay || !ta) return;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  ta.value = "";
+  ta.disabled = false;
+  if (cancel) cancel.disabled = false;
+  if (confirm) confirm.disabled = false;
+  ta.focus();
+}
+
+function closeMemoryModal() {
+  const overlay = document.getElementById("memory-modal-overlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+}
+
+function setMemoryModalBusy(busy) {
+  const ta = document.getElementById("memory-input");
+  const cancel = document.getElementById("memory-cancel");
+  const confirm = document.getElementById("memory-confirm");
+  if (ta) ta.disabled = busy;
+  if (cancel) cancel.disabled = busy;
+  if (confirm) confirm.disabled = busy;
+}
+
 async function loadSettings() {
   const line = document.getElementById("settings-line");
   const hint = document.getElementById("storage-hint");
@@ -236,36 +274,66 @@ function init() {
     }
   });
 
+  document.getElementById("btn-memory-save").addEventListener("click", () => {
+    openMemoryModal();
+  });
+
+  document.getElementById("memory-cancel").addEventListener("click", () => {
+    closeMemoryModal();
+  });
+
   document
-    .getElementById("btn-memory-save")
-    .addEventListener("click", async () => {
-      const text = window.prompt(
-        "请输入要提取记忆的文本（例如一段对话摘要或原始对话）："
-      );
-      if (!text || !text.trim()) return;
-      setBusy(true);
-      try {
-        const res = await api().extract_memory(text);
-        const st = res.stats || {};
-        let msg = "";
-        if (!res.ok) {
-          msg =
-            "记忆提取失败：" + (res.error || "未知错误") + `（已写入：事实 ${
-              st.facts || 0
-            } 条，事件 ${st.events || 0} 条，关系 ${st.relations || 0} 条）`;
-          appendMessage("assistant", msg, true);
-        } else {
-          msg = `已提取记忆：事实 ${st.facts || 0} 条，事件 ${
-            st.events || 0
-          } 条，关系 ${st.relations || 0} 条。`;
-          appendMessage("assistant", msg, false);
-        }
-      } catch (e) {
-        appendMessage("assistant", "记忆提取异常：" + String(e), true);
-      } finally {
-        setBusy(false);
-      }
+    .getElementById("memory-modal-overlay")
+    .addEventListener("click", (ev) => {
+      if (ev.target.id !== "memory-modal-overlay") return;
+      const loading = document.getElementById("global-loading");
+      if (loading && !loading.classList.contains("hidden")) return;
+      closeMemoryModal();
     });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const overlay = document.getElementById("memory-modal-overlay");
+    if (!overlay || overlay.classList.contains("hidden")) return;
+    const loading = document.getElementById("global-loading");
+    if (loading && !loading.classList.contains("hidden")) return;
+    closeMemoryModal();
+  });
+
+  document.getElementById("memory-confirm").addEventListener("click", async () => {
+    const ta = document.getElementById("memory-input");
+    const text = (ta && ta.value) ? ta.value.trim() : "";
+    if (!text) {
+      appendMessage("assistant", "请输入我要记住的内容。", true);
+      return;
+    }
+    setGlobalLoading(true);
+    setMemoryModalBusy(true);
+    try {
+      const res = await api().extract_memory(text);
+      const st = res.stats || {};
+      let msg = "";
+      if (!res.ok) {
+        msg =
+          "记忆提取失败：" + (res.error || "未知错误") + `（已写入：事实 ${
+            st.facts || 0
+          } 条，事件 ${st.events || 0} 条，关系 ${st.relations || 0} 条）`;
+        appendMessage("assistant", msg, true);
+      } else {
+        msg = `已提取记忆：事实 ${st.facts || 0} 条，事件 ${
+          st.events || 0
+        } 条，关系 ${st.relations || 0} 条。`;
+        appendMessage("assistant", msg, false);
+      }
+    } catch (e) {
+      appendMessage("assistant", "记忆提取异常：" + String(e), true);
+    } finally {
+      setGlobalLoading(false);
+      setMemoryModalBusy(false);
+      if (ta) ta.value = "";
+      closeMemoryModal();
+    }
+  });
 
   document
     .getElementById("btn-memory-view")

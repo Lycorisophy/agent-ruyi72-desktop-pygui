@@ -54,6 +54,34 @@
       </form>
     </main>
   </div>
+
+  <!-- 记住：输入弹窗 -->
+  <div id="memory-modal-overlay" class="memory-modal-overlay hidden" aria-hidden="true">
+    <div class="memory-modal" role="dialog" aria-labelledby="memory-modal-title">
+      <h3 id="memory-modal-title" class="memory-modal-title">请输入我要记住的内容</h3>
+      <p class="memory-modal-hint">可粘贴对话摘要或原文，确定后将由大模型提取事实、事件与关系并保存。</p>
+      <textarea
+        id="memory-input"
+        class="memory-modal-textarea"
+        rows="14"
+        placeholder="在此输入或粘贴要记忆的内容…"
+        autocomplete="off"
+      ></textarea>
+      <div class="memory-modal-actions">
+        <button type="button" id="memory-cancel" class="btn">取消</button>
+        <button type="button" id="memory-confirm" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全局加载（记住时转圈） -->
+  <div id="global-loading" class="global-loading hidden" aria-busy="true" aria-hidden="true">
+    <div class="global-loading-inner">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="global-loading-text">正在提取记忆，请稍候…</p>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

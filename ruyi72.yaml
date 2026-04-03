@@ -11,7 +11,7 @@ app:
 llm:
   provider: ollama
   base_url: http://127.0.0.1:11434
-  model: qwen3.5:35b-a3b-q8_0-nothink
+  model: gnremy/qwen3.5-abliterated:35b-a3b
   temperature: 0.6
   max_tokens: 131072
   api_mode: openai

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.agent.memory_tools import build_memory_bootstrap_block
 from src.agent.react import run_react
 from src.config import LLMConfig, RuyiConfig
 from src.llm.ollama import OllamaClient, OllamaClientError
@@ -27,6 +28,7 @@ class ConversationService:
         self._active_id: str | None = None
         self._messages: list[dict[str, str]] = []
         self._meta: SessionMeta | None = None
+        self._memory_bootstrap_pending = False
 
     def ensure_session(self) -> None:
         if self._active_id:
@@ -39,6 +41,7 @@ class ConversationService:
             self._active_id = m.id
             self._meta = m
             self._messages = []
+            self._memory_bootstrap_pending = True
 
     def list_sessions(self) -> list[dict]:
         return [m.model_dump() for m in self._store.list_sessions()]
@@ -52,6 +55,7 @@ class ConversationService:
         self._active_id = session_id
         self._meta = meta
         self._messages = messages
+        self._memory_bootstrap_pending = True
         return {"meta": self._meta.model_dump(), "messages": list(self._messages)}
 
     def get_active(self) -> dict:
@@ -125,10 +129,17 @@ class ConversationService:
         if not root.is_dir():
             return False, f"工作区不存在或不是目录: {root}", True
 
+        memory_extra = ""
+        if self._memory_bootstrap_pending:
+            memory_extra = build_memory_bootstrap_block()
+            self._memory_bootstrap_pending = False
+
         if self._meta.mode == "chat":
             # 对话模式：在每次调用前临时注入固定 system 提示 + safe 技能目录，不写入历史。
             skills_prompt = build_safe_skills_prompt()
             system_block = build_system_block(extra_system=skills_prompt or None)
+            if memory_extra:
+                system_block = system_block + "\n\n" + memory_extra
 
             call_messages: list[dict[str, str]] = [
                 {"role": "system", "content": system_block}
@@ -155,6 +166,7 @@ class ConversationService:
             self._messages,
             workspace=str(root),
             max_steps=self._meta.react_max_steps,
+            memory_bootstrap=memory_extra or None,
         )
         self._store.save_messages(self._active_id, self._messages)
         self._meta, _ = self._store.load(self._active_id)

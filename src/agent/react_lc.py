@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.tools import tool
 from langgraph.errors import GraphRecursionError
 
+from src.agent.memory_tools import browse_memory_formatted, search_memory_keyword
 from src.agent.tools import tool_list_dir, tool_read_file, tool_run_shell
 from src.config import LLMConfig
 from src.llm.chat_model import chat_model_from_config
@@ -20,9 +21,11 @@ from src.skills.loader import build_react_skills_block, get_registry
 _REACT_SYSTEM = """你是具备工具调用能力的智能体，必须在给定「工作区」目录下协助用户完成任务。
 工作区绝对路径: {workspace}
 
-你可以使用以下三类工具：
+你可以使用以下工具：
 - read_file / list_dir / run_shell：在工作区内读文件、列目录、执行命令。
 - load_skill：按需加载某个技能的完整说明（来自 skills 目录的 SKILL.md）。
+- browse_memory：浏览用户跨会话长期记忆中最近若干条（事实/事件/关系），只读本地存储，与工作区无关。
+- search_memory：按关键词在记忆库中子串检索（非向量），用于查找与当前任务相关的历史记忆。
 
 当前可用技能（仅元信息，不含实现细节）：
 
@@ -73,7 +76,17 @@ def _make_tools(workspace: str):
         # safe / act 直接返回文档
         return reg.read_full(meta)
 
-    return [read_file, list_dir, run_shell, load_skill]
+    @tool
+    def browse_memory(limit: int = 10) -> str:
+        """浏览跨会话记忆中各类最近若干条（事实、事件、关系）。limit 为每类最多条数。"""
+        return browse_memory_formatted(limit)
+
+    @tool
+    def search_memory(query: str, max_per_kind: int = 15) -> str:
+        """在记忆库 JSONL 中按关键词做子串匹配；max_per_kind 为每类最多返回条数。"""
+        return search_memory_keyword(query, max_per_kind=max_per_kind)
+
+    return [read_file, list_dir, run_shell, load_skill, browse_memory, search_memory]
 
 
 def _dicts_to_messages(msgs: list[dict[str, str]]) -> list[BaseMessage]:
@@ -137,6 +150,7 @@ def run_react(
     *,
     workspace: str,
     max_steps: int,
+    memory_bootstrap: str | None = None,
 ) -> tuple[bool, str]:
     """
     使用 LangChain create_agent（底层为 LangGraph）执行工具循环。
@@ -153,6 +167,8 @@ def run_react(
         skills_block=skills_block or "（当前未发现任何技能定义）",
     )
     system_prompt = build_system_block(extra_system=react_system)
+    if memory_bootstrap:
+        system_prompt = system_prompt + "\n\n" + memory_bootstrap
 
     agent = create_agent(
         llm,
