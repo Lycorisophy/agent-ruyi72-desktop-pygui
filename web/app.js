@@ -235,6 +235,36 @@ function init() {
       /* ignore */
     }
   });
+
+  document
+    .getElementById("btn-memory-extract")
+    .addEventListener("click", async () => {
+      const text = window.prompt(
+        "请输入要提取记忆的文本（例如一段对话摘要或原始对话）："
+      );
+      if (!text || !text.trim()) return;
+      setBusy(true);
+      try {
+        const res = await api().extract_memory(text);
+        if (!res.ok) {
+          appendMessage(
+            "assistant",
+            "记忆提取失败：" + (res.error || "未知错误"),
+            true
+          );
+        } else {
+          const st = res.stats || {};
+          const msg = `已提取记忆：事实 ${st.facts || 0} 条，事件 ${
+            st.events || 0
+          } 条，关系 ${st.relations || 0} 条。`;
+          appendMessage("assistant", msg, false);
+        }
+      } catch (e) {
+        appendMessage("assistant", "记忆提取异常：" + String(e), true);
+      } finally {
+        setBusy(false);
+      }
+    });
 }
 
 waitForPywebview()

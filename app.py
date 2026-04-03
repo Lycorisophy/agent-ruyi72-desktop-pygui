@@ -13,6 +13,7 @@ import webview  # noqa: E402
 
 from src.config import RuyiConfig, load_config  # noqa: E402
 from src.llm.ollama import effective_trust_env, resolve_llm_api_key  # noqa: E402
+from src.agent.memory_extractor import extract_and_store_from_text  # noqa: E402
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
 from src.storage.session_store import SessionStore  # noqa: E402
 
@@ -60,6 +61,15 @@ class Api:
             mode=p.get("mode"),
             react_max_steps=p.get("react_max_steps"),
         )
+
+    def extract_memory(self, text: str) -> dict:
+        """从前端提供的一段文本中抽取记忆单元并保存，返回数量统计。"""
+        result = extract_and_store_from_text(self._cfg.llm, text or "")
+        ok = True
+        error = result.pop("error", None)
+        if error:
+            ok = False
+        return {"ok": ok, "stats": result, "error": error}
 
 
 def main() -> None:
