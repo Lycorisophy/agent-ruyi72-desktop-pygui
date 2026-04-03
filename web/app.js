@@ -8,6 +8,8 @@ function waitForPywebview() {
   });
 }
 
+const api = () => window.pywebview.api;
+
 function el(tag, className, text) {
   const n = document.createElement(tag);
   if (className) n.className = className;
@@ -15,16 +17,33 @@ function el(tag, className, text) {
   return n;
 }
 
-function appendMessage(role, text, isError) {
+let currentSessionId = null;
+
+function renderMessages(messages) {
   const box = document.getElementById("messages");
-  const cls =
-    role === "user"
-      ? "msg msg-user"
-      : isError
-        ? "msg msg-error"
-        : "msg msg-assistant";
-  const node = el("div", cls, text);
-  box.appendChild(node);
+  box.innerHTML = "";
+  if (!messages || !messages.length) {
+    box.appendChild(
+      el("div", "msg msg-system", "暂无消息。设置工作区并选择模式后发送。")
+    );
+    return;
+  }
+  for (const m of messages) {
+    const role = m.role;
+    const text = m.content || "";
+    if (role === "system") {
+      const node = el("div", "msg msg-system", text);
+      box.appendChild(node);
+      continue;
+    }
+    const cls =
+      role === "user"
+        ? "msg msg-user"
+        : role === "assistant"
+          ? "msg msg-assistant"
+          : "msg msg-assistant";
+    box.appendChild(el("div", cls, text));
+  }
   box.scrollTop = box.scrollHeight;
 }
 
@@ -37,8 +56,9 @@ function setBusy(busy) {
 
 async function loadSettings() {
   const line = document.getElementById("settings-line");
+  const hint = document.getElementById("storage-hint");
   try {
-    const s = await window.pywebview.api.get_settings_snapshot();
+    const s = await api().get_settings_snapshot();
     const auth =
       s.api_key_configured === true
         ? " · 已配置 API Key"
@@ -48,9 +68,81 @@ async function loadSettings() {
         ? " · 直连(不走系统代理)"
         : " · 使用系统代理环境变量";
     line.textContent = `${s.provider} · ${s.api_mode} · ${s.model} · ${s.base_url}${auth}${te}`;
+    hint.textContent = s.sessions_root
+      ? `历史目录: ${s.sessions_root}`
+      : "";
   } catch (e) {
     line.textContent = "无法读取配置：" + String(e);
   }
+}
+
+function applyMetaToForm(meta) {
+  if (!meta) return;
+  currentSessionId = meta.id;
+  const ws = document.getElementById("workspace");
+  ws.value = meta.workspace || "";
+  const mode = meta.mode || "chat";
+  const radios = document.querySelectorAll('input[name="mode"]');
+  radios.forEach((r) => {
+    r.checked = r.value === mode;
+  });
+  const steps = document.getElementById("react-steps");
+  steps.value = meta.react_max_steps != null ? meta.react_max_steps : 8;
+}
+
+async function renderSessionList() {
+  const ul = document.getElementById("session-list");
+  ul.innerHTML = "";
+  const list = await api().list_sessions();
+  for (const s of list) {
+    const li = el("li", "session-item");
+    li.dataset.id = s.id;
+    if (s.id === currentSessionId) li.classList.add("active");
+    const t = el("div", "session-item-title", s.title || s.id);
+    const sub = el(
+      "div",
+      "session-item-meta",
+      `${s.mode || "chat"} · ${(s.updated_at || "").slice(0, 19)}`
+    );
+    li.appendChild(t);
+    li.appendChild(sub);
+    li.addEventListener("click", () => openSession(s.id));
+    ul.appendChild(li);
+  }
+}
+
+async function openSession(id) {
+  const data = await api().open_session(id);
+  applyMetaToForm(data.meta);
+  renderMessages(data.messages);
+  await renderSessionList();
+}
+
+async function refreshActive() {
+  const data = await api().get_active_session();
+  applyMetaToForm(data.meta);
+  renderMessages(data.messages);
+  await renderSessionList();
+}
+
+async function pushWorkspaceAndMode() {
+  const workspace = document.getElementById("workspace").value.trim();
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  let react_max_steps = parseInt(
+    document.getElementById("react-steps").value,
+    10
+  );
+  if (Number.isNaN(react_max_steps)) react_max_steps = 8;
+  await api().update_session({
+    workspace: workspace || null,
+    mode,
+    react_max_steps,
+  });
+}
+
+async function loadSettingsAndSession() {
+  await loadSettings();
+  await refreshActive();
 }
 
 async function onSubmit(e) {
@@ -59,14 +151,13 @@ async function onSubmit(e) {
   const text = input.value.trim();
   if (!text) return;
 
-  appendMessage("user", text, false);
   input.value = "";
   setBusy(true);
   try {
-    const res = await window.pywebview.api.send_message(text);
-    if (res.ok) {
-      appendMessage("assistant", res.message, false);
-    } else {
+    await pushWorkspaceAndMode();
+    const res = await api().send_message(text);
+    await refreshActive();
+    if (!res.ok && res.append_error) {
       appendMessage("assistant", res.message, true);
     }
   } catch (err) {
@@ -74,6 +165,21 @@ async function onSubmit(e) {
   } finally {
     setBusy(false);
   }
+}
+
+function appendMessage(role, text, isError) {
+  const box = document.getElementById("messages");
+  const empty = box.querySelector(".msg-system");
+  if (empty && empty.textContent.includes("暂无消息")) empty.remove();
+  const cls =
+    role === "user"
+      ? "msg msg-user"
+      : isError
+        ? "msg msg-error"
+        : "msg msg-assistant";
+  const node = el("div", cls, text);
+  box.appendChild(node);
+  box.scrollTop = box.scrollHeight;
 }
 
 function init() {
@@ -85,12 +191,56 @@ function init() {
       document.getElementById("chat-form").requestSubmit();
     }
   });
+
+  document.getElementById("btn-new-session").addEventListener("click", async () => {
+    setBusy(true);
+    try {
+      await api().create_session(null);
+      await refreshActive();
+    } catch (e) {
+      appendMessage("assistant", "新建失败：" + String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  document.getElementById("btn-apply-ws").addEventListener("click", async () => {
+    setBusy(true);
+    try {
+      await pushWorkspaceAndMode();
+      await refreshActive();
+    } catch (e) {
+      appendMessage("assistant", "应用失败：" + String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  document.querySelectorAll('input[name="mode"]').forEach((r) => {
+    r.addEventListener("change", async () => {
+      try {
+        await pushWorkspaceAndMode();
+        await refreshActive();
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  });
+
+  document.getElementById("react-steps").addEventListener("change", async () => {
+    try {
+      await pushWorkspaceAndMode();
+      await refreshActive();
+    } catch (_) {
+      /* ignore */
+    }
+  });
 }
 
 waitForPywebview()
   .then(() => {
     init();
-    return loadSettings();
+    return loadSettingsAndSession();
   })
   .catch((e) => {
     document.getElementById("settings-line").textContent =

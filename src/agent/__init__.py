@@ -1,5 +1,5 @@
-"""Agent 会话。"""
+"""Agent：ReAct 与工具。"""
 
-from src.agent.session import AgentSession
+from src.agent.react import run_react
 
-__all__ = ["AgentSession"]
+__all__ = ["run_react"]

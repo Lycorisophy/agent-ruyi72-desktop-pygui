@@ -20,3 +20,11 @@ llm:
   # trust_env: false
   # 本地默认可不填。远程 / Ollama Cloud / 需鉴权的反代：填写令牌，或设 OLLAMA_API_KEY
   # api_key: ""
+
+# 会话历史根目录；留空则为 %USERPROFILE%\.ruyi72\sessions\<sessionId>\
+storage:
+  sessions_root: ""
+
+# 新建会话时 ReAct 默认最大步数
+agent:
+  react_max_steps_default: 8

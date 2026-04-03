@@ -1,127 +1,97 @@
-"""
-如意 Agent 配置管理模块
+"""加载与校验 ruyi72 配置文件。"""
 
-使用 Pydantic Settings 进行配置管理
-支持从 config.yaml 和环境变量加载配置
-"""
+from __future__ import annotations
 
 import os
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-# 项目根目录
-PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_DIR = PROJECT_ROOT / "config"
+_DEFAULT_APP_TITLE = "如意72"
 
 
 class AppConfig(BaseModel):
-    """应用配置"""
-    name: str = "ruyi72"
-    version: str = "1.0.0"
-    environment: str = "development"
+    title: str = _DEFAULT_APP_TITLE
+    width: int = Field(default=960, ge=400, le=4096)
+    height: int = Field(default=640, ge=300, le=4096)
 
 
-class ServerConfig(BaseModel):
-    """服务器配置"""
-    host: str = "127.0.0.1"
-    port: int = 8765
-    reload: bool = False
+class LLMConfig(BaseModel):
+    provider: str = "ollama"
+    base_url: str = "http://127.0.0.1:11434"
+    model: str = "llama3.2"
+    temperature: float = Field(default=0.6, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=2048, ge=1, le=262144)
+    # 本地 Ollama 一般无需填写；远程 / Ollama Cloud / 需鉴权的反代可填，或设环境变量 OLLAMA_API_KEY
+    api_key: str | None = None
+    # native: POST /api/chat（默认）；openai: POST /v1/chat/completions（部分网关/兼容层只转发 /v1）
+    api_mode: Literal["native", "openai"] = "native"
+    # None=自动：本机 loopback 不走系统代理（避免 HTTP(S)_PROXY 导致 502）；true/false 可强制
+    trust_env: bool | None = None
 
 
-class OllamaConfig(BaseModel):
-    """Ollama LLM 配置"""
-    base_url: str = "http://localhost:11434"
-    model: str = "qwen3.5:35b-a3b-q8_0-nothink"
-    timeout: int = 120
-    temperature: float = 0.7
-    max_tokens: int = 4096
-    num_ctx: int = 8192
-    num_gpu: int = 1
-
-
-class SandboxConfig(BaseModel):
-    """沙箱配置"""
-    enabled: bool = True
-    max_execution_time: int = 30
-    allowed_commands: list[str] = ["python", "node", "git", "pip", "npm"]
-    allowed_paths: list[str] = []
+class StorageConfig(BaseModel):
+    # 为空则使用 ~/.ruyi72/sessions/<sessionId>/
+    sessions_root: str = ""
 
 
 class AgentConfig(BaseModel):
-    """Agent 配置"""
-    default_mode: str = "general"
-    max_iterations: int = 50
-    max_cycles: int = 30
+    react_max_steps_default: int = Field(default=8, ge=1, le=200)
 
 
-class SkillsConfig(BaseModel):
-    """技能系统配置"""
-    skills_dir: str = "./skills"
-    auto_load: bool = True
-    enabled_skills: list[str] = []  # 空表示启用所有
-
-
-class Settings(BaseSettings):
-    """主配置类"""
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        env_nested_delimiter="__",
-        case_sensitive=False,
-    )
-    
+class RuyiConfig(BaseModel):
+    version: int = 1
     app: AppConfig = Field(default_factory=AppConfig)
-    server: ServerConfig = Field(default_factory=ServerConfig)
-    ollama: OllamaConfig = Field(default_factory=OllamaConfig)
-    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
-    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
 
-def load_yaml_config(config_path: Optional[Path] = None) -> dict[str, Any]:
-    """从 YAML 文件加载配置"""
-    if config_path is None:
-        config_path = CONFIG_DIR / "config.yaml"
-    
-    if not config_path.exists():
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in override.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _default_dict() -> dict[str, Any]:
+    return RuyiConfig().model_dump()
+
+
+def config_search_paths() -> list[Path]:
+    paths: list[Path] = []
+    env = os.environ.get("RUYI72_CONFIG", "").strip()
+    if env:
+        paths.append(Path(env).expanduser())
+    paths.append(Path.cwd() / "ruyi72.yaml")
+    paths.append(Path.cwd() / "config" / "ruyi72.yaml")
+    home = Path.home()
+    paths.append(home / ".ruyi72" / "ruyi72.yaml")
+    return paths
+
+
+def load_config_file(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    if data is None:
         return {}
-    
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"配置文件根节点必须是映射: {path}")
+    return data
 
 
-@lru_cache()
-def get_settings() -> Settings:
-    """获取单例配置实例"""
-    yaml_config = load_yaml_config()
-    
-    settings = Settings()
-    
-    if yaml_config:
-        for section, values in yaml_config.items():
-            if hasattr(settings, section) and isinstance(values, dict):
-                section_obj = getattr(settings, section)
-                for key, value in values.items():
-                    if hasattr(section_obj, key):
-                        setattr(section_obj, key, value)
-    
-    return settings
-
-
-# 全局配置实例
-settings = get_settings()
-
-
-__all__ = [
-    "Settings",
-    "settings",
-    "get_settings",
-    "PROJECT_ROOT",
-    "CONFIG_DIR",
-]
+def load_config() -> RuyiConfig:
+    merged: dict[str, Any] = _default_dict()
+    for p in config_search_paths():
+        try:
+            if p.is_file():
+                merged = _deep_merge(merged, load_config_file(p))
+                break
+        except OSError:
+            continue
+    return RuyiConfig.model_validate(merged)

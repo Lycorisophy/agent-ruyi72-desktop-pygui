@@ -1,247 +1,174 @@
-"""
-Ollama LLM 提供商
+"""Ollama HTTP 客户端：原生 /api/chat 或 OpenAI 兼容 /v1/chat/completions。"""
 
-封装与 Ollama API 的交互
-支持流式响应
-"""
+from __future__ import annotations
 
 import json
-from typing import Any, AsyncGenerator, Optional
+import os
+from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from src.logger import get_logger
-
-logger = get_logger(__name__)
+from src.config import LLMConfig
 
 
-class OllamaProvider:
-    """
-    Ollama LLM 提供商
-    
-    提供与本地 Ollama 服务器的交互接口
-    """
-    
-    def __init__(
-        self,
-        base_url: str = "http://localhost:11434",
-        model: str = "qwen3.5:35b-a3b-q8_0-nothink",
-        timeout: int = 120,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-        **kwargs,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout = timeout
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.options = kwargs
-        
-        # HTTP 客户端
-        self.client = httpx.AsyncClient(timeout=httpx.Timeout(timeout))
-        
-        logger.info(f"Initialized OllamaProvider: {base_url}, model={model}")
-    
-    async def close(self):
-        """关闭客户端"""
-        await self.client.aclose()
-    
-    async def _post(self, endpoint: str, data: dict) -> dict:
-        """POST 请求"""
-        url = f"{self.base_url}{endpoint}"
-        response = await self.client.post(url, json=data)
-        response.raise_for_status()
-        return response.json()
-    
-    async def generate(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        context: Optional[list] = None,
-        stream: bool = False,
-        **options,
-    ) -> dict:
-        """
-        生成文本
-        
-        Args:
-            prompt: 用户提示
-            system: 系统提示
-            context: 上下文
-            stream: 是否流式返回
-            **options: 额外的模型参数
-        
-        Returns:
-            dict: 生成结果
-        """
-        data = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": stream,
-            "options": {
-                "temperature": options.get("temperature", self.temperature),
-                "num_predict": options.get("max_tokens", self.max_tokens),
-                **self.options,
-                **options,
-            },
-        }
-        
-        if system:
-            data["system"] = system
-        if context:
-            data["context"] = context
-        
-        logger.debug(f"Generating with prompt: {prompt[:100]}...")
-        
-        response = await self._post("/api/generate", data)
-        
-        return {
-            "content": response.get("response", ""),
-            "model": response.get("model", self.model),
-            "done": response.get("done", True),
-        }
-    
-    async def generate_stream(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        context: Optional[list] = None,
-        **options,
-    ) -> AsyncGenerator[str, None]:
-        """
-        流式生成文本
-        
-        Args:
-            prompt: 用户提示
-            system: 系统提示
-            context: 上下文
-            **options: 额外的模型参数
-        
-        Yields:
-            str: 生成的文本片段
-        """
-        data = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": True,
-            "options": {
-                "temperature": options.get("temperature", self.temperature),
-                "num_predict": options.get("max_tokens", self.max_tokens),
-                **self.options,
-                **options,
-            },
-        }
-        
-        if system:
-            data["system"] = system
-        
-        url = f"{self.base_url}/api/generate"
-        
-        async with self.client.stream("POST", url, json=data) as response:
-            response.raise_for_status()
-            
-            async for line in response.aiter_lines():
-                if line:
-                    try:
-                        chunk = json.loads(line)
-                        if "response" in chunk:
-                            yield chunk["response"]
-                        if chunk.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-    
-    async def chat(
-        self,
-        messages: list[dict],
-        stream: bool = False,
-        **options,
-    ) -> dict:
-        """
-        聊天接口（使用 /api/chat）
-        
-        Args:
-            messages: 消息列表 [{"role": "user", "content": "..."}]
-            stream: 是否流式返回
-            **options: 额外的模型参数
-        
-        Returns:
-            dict: 生成结果
-        """
-        data = {
-            "model": self.model,
-            "messages": messages,
-            "stream": stream,
-            "options": {
-                "temperature": options.get("temperature", self.temperature),
-                "num_predict": options.get("max_tokens", self.max_tokens),
-                **self.options,
-                **options,
-            },
-        }
-        
-        logger.debug(f"Chat with {len(messages)} messages")
-        
-        response = await self._post("/api/chat", data)
-        
-        return {
-            "content": response.get("message", {}).get("content", ""),
-            "model": response.get("model", self.model),
-            "done": response.get("done", True),
-        }
-    
-    async def chat_stream(
-        self,
-        messages: list[dict],
-        **options,
-    ) -> AsyncGenerator[str, None]:
-        """
-        流式聊天
-        
-        Args:
-            messages: 消息列表
-            **options: 额外的模型参数
-        
-        Yields:
-            str: 生成的文本片段
-        """
-        data = {
-            "model": self.model,
-            "messages": messages,
-            "stream": True,
-            "options": {
-                "temperature": options.get("temperature", self.temperature),
-                "num_predict": options.get("max_tokens", self.max_tokens),
-                **self.options,
-                **options,
-            },
-        }
-        
-        url = f"{self.base_url}/api/chat"
-        
-        async with self.client.stream("POST", url, json=data) as response:
-            response.raise_for_status()
-            
-            async for line in response.aiter_lines():
-                if line:
-                    try:
-                        chunk = json.loads(line)
-                        if "message" in chunk and "content" in chunk["message"]:
-                            yield chunk["message"]["content"]
-                        if chunk.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-    
-    async def health_check(self) -> bool:
-        """健康检查"""
+def resolve_llm_api_key(cfg: LLMConfig) -> str | None:
+    """配置文件 api_key 优先，否则读环境变量 OLLAMA_API_KEY / RUYI72_OLLAMA_API_KEY。"""
+    if cfg.api_key and str(cfg.api_key).strip():
+        return str(cfg.api_key).strip()
+    for name in ("OLLAMA_API_KEY", "RUYI72_OLLAMA_API_KEY"):
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    return None
+
+
+def effective_trust_env(cfg: LLMConfig) -> bool:
+    """是否让 httpx 使用系统代理环境变量。本机 loopback 默认 False，避免代理导致 502。"""
+    if cfg.trust_env is not None:
+        return cfg.trust_env
+    host = (urlparse(cfg.base_url).hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return False
+    if host.startswith("127."):
+        return False
+    return True
+
+
+def _base_prefix(cfg: LLMConfig) -> str:
+    return cfg.base_url.rstrip("/") + "/"
+
+
+class OllamaClientError(Exception):
+    """可展示给用户的 LLM 调用错误。"""
+
+
+class OllamaClient:
+    def __init__(self, cfg: LLMConfig) -> None:
+        self._cfg = cfg
+        base = _base_prefix(cfg)
+        self._native_chat_url = urljoin(base, "api/chat")
+        self._openai_chat_url = urljoin(base, "v1/chat/completions")
+
+    def _request_chat_url(self) -> str:
+        if self._cfg.api_mode == "openai":
+            return self._openai_chat_url
+        return self._native_chat_url
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        if self._cfg.provider != "ollama":
+            raise OllamaClientError(f"当前仅支持 provider=ollama，收到: {self._cfg.provider}")
+
+        headers: dict[str, str] = {}
+        key = resolve_llm_api_key(self._cfg)
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+
+        chat_url = self._request_chat_url()
+        trust = effective_trust_env(self._cfg)
+
+        if self._cfg.api_mode == "openai":
+            body: dict[str, Any] = {
+                "model": self._cfg.model,
+                "messages": messages,
+                "stream": False,
+                "temperature": self._cfg.temperature,
+                "max_tokens": self._cfg.max_tokens,
+            }
+        else:
+            body = {
+                "model": self._cfg.model,
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "temperature": self._cfg.temperature,
+                    "num_predict": self._cfg.max_tokens,
+                },
+            }
+
         try:
-            response = await self.client.get(f"{self.base_url}/api/tags")
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return False
+            with httpx.Client(
+                timeout=httpx.Timeout(120.0, connect=10.0),
+                trust_env=trust,
+            ) as client:
+                r = client.post(chat_url, json=body, headers=headers)
+        except httpx.ConnectError as e:
+            raise OllamaClientError(
+                "无法连接到 Ollama。请确认 Ollama 已启动，且配置中的 base_url 正确。"
+                f" ({e!s})"
+            ) from e
+        except httpx.TimeoutException as e:
+            raise OllamaClientError(f"请求超时，请稍后重试或检查模型是否过大。 ({e!s})") from e
+
+        if r.status_code == 404:
+            raise OllamaClientError(
+                f"未找到接口或模型（HTTP 404）。请求: POST {chat_url}。"
+                f" 若使用网关，可尝试将 llm.api_mode 设为 openai（/v1/chat/completions）。"
+                f" 并确认已 `ollama pull {self._cfg.model}`。"
+            )
+        if r.status_code == 502:
+            detail = (r.text or "")[:500]
+            hint = (
+                f"网关或上游不可用（HTTP 502）。请求: POST {chat_url}。\n"
+                "常见原因：1) 本机访问仍走了系统代理——可在 ruyi72.yaml 设置 "
+                "`llm.trust_env: false`（loopback 默认已关闭代理；若仍 502 请显式设置）；"
+                "2) 反代只转发 /v1——尝试 `llm.api_mode: openai`；"
+                "3) 上游 Ollama 未启动或地址错误。"
+            )
+            if key:
+                hint += " 若服务端要求鉴权，请确认 api_key / OLLAMA_API_KEY 正确。"
+            raise OllamaClientError(hint + (f"\n详情: {detail}" if detail else ""))
+        if r.status_code == 401 or r.status_code == 403:
+            detail = (r.text or "")[:500]
+            raise OllamaClientError(
+                f"鉴权失败（HTTP {r.status_code}）。请检查 llm.api_key 或 OLLAMA_API_KEY 是否正确。"
+                + (f" 详情: {detail}" if detail else "")
+            )
+        if r.status_code >= 400:
+            detail = (r.text or "")[:500]
+            raise OllamaClientError(
+                f"Ollama 返回错误 HTTP {r.status_code}（POST {chat_url}）。"
+                + (f" 详情: {detail}" if detail else "")
+            )
+
+        try:
+            data = r.json()
+        except json.JSONDecodeError as e:
+            raise OllamaClientError(f"无法解析 Ollama 响应 JSON。 ({e!s})") from e
+
+        if self._cfg.api_mode == "openai":
+            return self._parse_openai_response(data, r.text)
+
+        return self._parse_native_response(data, r.text)
+
+    def _parse_native_response(self, data: Any, raw: str) -> str:
+        msg = data.get("message") if isinstance(data, dict) else None
+        if isinstance(msg, dict):
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                return content
+
+        raise OllamaClientError(
+            "Ollama 响应中缺少 assistant 内容。响应: " + (raw[:800] if raw else "(空)")
+        )
+
+    def _parse_openai_response(self, data: Any, raw: str) -> str:
+        if not isinstance(data, dict):
+            raise OllamaClientError("OpenAI 兼容响应格式无效（非 JSON 对象）。")
+        choices = data.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                msg = first.get("message")
+                if isinstance(msg, dict):
+                    content = msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        return content
+        raise OllamaClientError(
+            "OpenAI 兼容响应中缺少 choices[0].message.content。响应: "
+            + (raw[:800] if raw else "(空)")
+        )
 
 
-__all__ = ["OllamaProvider"]
+def ollama_chat(cfg: LLMConfig, messages: list[dict[str, str]]) -> str:
+    return OllamaClient(cfg).chat(messages)

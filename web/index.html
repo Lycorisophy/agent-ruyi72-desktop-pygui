@@ -6,24 +6,50 @@
   <title>如意72</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <header class="header">
-    <h1 class="title">如意72</h1>
-    <p id="settings-line" class="settings"></p>
-  </header>
-  <main class="main">
-    <div id="messages" class="messages" aria-live="polite"></div>
-    <form id="chat-form" class="composer">
-      <textarea
-        id="input"
-        class="input"
-        rows="3"
-        placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-        autocomplete="off"
-      ></textarea>
-      <button type="submit" id="send" class="send">发送</button>
-    </form>
-  </main>
+<body class="app">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <h2 class="sidebar-title">会话</h2>
+      <button type="button" id="btn-new-session" class="btn btn-small">新建</button>
+    </div>
+    <ul id="session-list" class="session-list"></ul>
+    <p id="storage-hint" class="storage-hint"></p>
+  </aside>
+  <div class="content">
+    <header class="header">
+      <h1 class="title">如意72</h1>
+      <p id="settings-line" class="settings"></p>
+    </header>
+    <section class="session-bar">
+      <label class="field">
+        <span>工作区</span>
+        <input type="text" id="workspace" class="field-input" placeholder="文件夹绝对路径，例如 C:\project\myrepo" />
+        <button type="button" id="btn-apply-ws" class="btn btn-small">应用</button>
+      </label>
+      <div class="mode-row">
+        <span class="mode-label">模式</span>
+        <label class="radio"><input type="radio" name="mode" value="chat" checked /> 对话（仅回答）</label>
+        <label class="radio"><input type="radio" name="mode" value="react" /> ReAct（思考并执行）</label>
+        <label class="field react-steps">
+          <span>ReAct 最大步数</span>
+          <input type="number" id="react-steps" min="1" max="200" value="8" class="field-input narrow" />
+        </label>
+      </div>
+    </section>
+    <main class="main">
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <form id="chat-form" class="composer">
+        <textarea
+          id="input"
+          class="input"
+          rows="3"
+          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+          autocomplete="off"
+        ></textarea>
+        <button type="submit" id="send" class="send">发送</button>
+      </form>
+    </main>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

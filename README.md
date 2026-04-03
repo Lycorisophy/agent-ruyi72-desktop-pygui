@@ -25,6 +25,7 @@ pip install -r requirements.txt
 1. 复制 [config/ruyi72.example.yaml](config/ruyi72.example.yaml) 为以下**任一**位置（按优先级从高到低，命中第一个即生效）：
    - 环境变量 `RUYI72_CONFIG` 指向的绝对/相对路径；
    - 当前工作目录下的 `ruyi72.yaml`；
+   - 当前工作目录下的 `config/ruyi72.yaml`；
    - 用户目录 `%USERPROFILE%\.ruyi72\ruyi72.yaml`。
 
 2. 按需修改 `llm.base_url`、`llm.model`、`temperature`、`max_tokens` 以及窗口 `app.title`、`width`、`height`。
@@ -36,6 +37,14 @@ pip install -r requirements.txt
 若出现 **HTTP 502**，多为网关无法连上上游或上游未就绪；在 **Windows** 上还常见 **系统代理（HTTP_PROXY 等）** 把对本机 `127.0.0.1` 的请求错误转发，从而 502。程序对 **localhost / 127.0.0.1** 默认已让 httpx **不使用系统代理**（`trust_env` 为 false）；若仍异常，可在配置中显式设置 `llm.trust_env: false`。**若反代只转发 `/v1`**，可改为 `llm.api_mode: openai` 使用 `/v1/chat/completions`。界面顶部会显示 `api_mode`、`trust_env` 与 API Key 是否已配置（不展示密钥）。
 
 若不存在任何配置文件，将使用程序内建默认值（见 `src/config.py` 中 `RuyiConfig`）。
+
+4. **会话与历史目录（可选）**：默认将每个会话保存到 `%USERPROFILE%\.ruyi72\sessions\<sessionId>\`（含 `meta.json` 与 `messages.json`）。可在配置中设置 `storage.sessions_root` 指向自定义根目录。
+
+## 界面说明
+
+- 左侧可**新建 / 切换会话**；每个会话可设置**工作区**（本地文件夹路径），对话与 ReAct 均仅允许访问该目录内的文件（工具会校验路径）。
+- **对话**：仅多轮问答，不执行工具。
+- **ReAct**：模型按 JSON 输出调用 `read_file` / `list_dir` / `run_shell`，直至 `finish` 或达到「最大步数」。
 
 ## 运行
 
@@ -57,7 +66,9 @@ agent-ruyi72-desktop-pygui/
 ├── src/
 │   ├── config.py
 │   ├── llm/ollama.py
-│   └── agent/session.py
+│   ├── storage/session_store.py
+│   ├── service/conversation.py
+│   └── agent/ (react.py, tools.py)
 └── web/
     ├── index.html
     ├── style.css
