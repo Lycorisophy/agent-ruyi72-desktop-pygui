@@ -83,8 +83,15 @@ body.app {
   padding: 8px 12px;
   font-size: 11px;
   color: #7a7a8c;
-  border-top: 1px solid #2a2a34;
   word-break: break-all;
+}
+
+.sidebar-footer {
+  padding: 8px 12px 10px;
+  border-top: 1px solid #2a2a34;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
 }
 
 .content {

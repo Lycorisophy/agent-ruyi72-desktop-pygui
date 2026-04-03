@@ -15,6 +15,7 @@ from src.config import RuyiConfig, load_config  # noqa: E402
 from src.llm.ollama import effective_trust_env, resolve_llm_api_key  # noqa: E402
 from src.agent.memory_extractor import extract_and_store_from_text  # noqa: E402
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
+from src.storage.memory_store import MemoryStore, default_store  # noqa: E402
 from src.storage.session_store import SessionStore  # noqa: E402
 
 
@@ -70,6 +71,53 @@ class Api:
         if error:
             ok = False
         return {"ok": ok, "stats": result, "error": error}
+
+    def browse_memory(self, limit: int | None = None) -> dict:
+        """浏览最近的记忆条目，返回格式化后的文本和原始结构。"""
+        store: MemoryStore = default_store()
+        n = int(limit or 10)
+        facts = store.read_recent("facts", n)
+        events = store.read_recent("events", n)
+        relations = store.read_recent("relations", n)
+
+        lines: list[str] = []
+        if facts:
+            lines.append("【事实】")
+            for f in facts:
+                summary = f.get("summary") or ""
+                key = f.get("key") or ""
+                value = f.get("value") or ""
+                tags = f.get("tags") or []
+                tag_str = f"[{', '.join(tags)}] " if tags else ""
+                lines.append(f"- {tag_str}{summary} ({key} = {value})")
+            lines.append("")
+        if events:
+            lines.append("【事件】")
+            for e in events:
+                t = e.get("time") or ""
+                loc = e.get("location") or ""
+                actors = ", ".join(e.get("actors") or [])
+                action = e.get("action") or ""
+                result = e.get("result") or ""
+                lines.append(f"- [{t} @ {loc}] ({actors})：{action} -> {result}")
+            lines.append("")
+        if relations:
+            lines.append("【事件关系】")
+            for r in relations:
+                ea = r.get("event_a_id") or ""
+                eb = r.get("event_b_id") or ""
+                rel = r.get("relation") or ""
+                expl = r.get("explanation") or ""
+                lines.append(f"- {ea} -> {eb}：{rel}（{expl}）")
+
+        text = "\n".join(lines).strip() or "当前还没有记忆条目。"
+        return {
+            "ok": True,
+            "text": text,
+            "facts": facts,
+            "events": events,
+            "relations": relations,
+        }
 
 
 def main() -> None:

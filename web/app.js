@@ -237,7 +237,7 @@ function init() {
   });
 
   document
-    .getElementById("btn-memory-extract")
+    .getElementById("btn-memory-save")
     .addEventListener("click", async () => {
       const text = window.prompt(
         "请输入要提取记忆的文本（例如一段对话摘要或原始对话）："
@@ -246,21 +246,36 @@ function init() {
       setBusy(true);
       try {
         const res = await api().extract_memory(text);
+        const st = res.stats || {};
+        let msg = "";
         if (!res.ok) {
-          appendMessage(
-            "assistant",
-            "记忆提取失败：" + (res.error || "未知错误"),
-            true
-          );
+          msg =
+            "记忆提取失败：" + (res.error || "未知错误") + `（已写入：事实 ${
+              st.facts || 0
+            } 条，事件 ${st.events || 0} 条，关系 ${st.relations || 0} 条）`;
+          appendMessage("assistant", msg, true);
         } else {
-          const st = res.stats || {};
-          const msg = `已提取记忆：事实 ${st.facts || 0} 条，事件 ${
+          msg = `已提取记忆：事实 ${st.facts || 0} 条，事件 ${
             st.events || 0
           } 条，关系 ${st.relations || 0} 条。`;
           appendMessage("assistant", msg, false);
         }
       } catch (e) {
         appendMessage("assistant", "记忆提取异常：" + String(e), true);
+      } finally {
+        setBusy(false);
+      }
+    });
+
+  document
+    .getElementById("btn-memory-view")
+    .addEventListener("click", async () => {
+      setBusy(true);
+      try {
+        const res = await api().browse_memory(10);
+        appendMessage("assistant", res.text || "当前还没有记忆条目。", false);
+      } catch (e) {
+        appendMessage("assistant", "浏览记忆失败：" + String(e), true);
       } finally {
         setBusy(false);
       }

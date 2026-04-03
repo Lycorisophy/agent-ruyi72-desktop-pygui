@@ -86,6 +86,30 @@ class MemoryStore:
                 count += 1
         return count
 
+    def read_recent(self, kind: MemoryKind, limit: int = 20) -> list[dict]:
+        """读取最近的若干条记忆，简单从文件尾部截取。"""
+        path = self._path_for(kind)
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        if limit > 0:
+            lines = lines[-limit:]
+        out: list[dict] = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                out.append(obj)
+        return out
+
 
 def default_store() -> MemoryStore:
     return MemoryStore(None)
