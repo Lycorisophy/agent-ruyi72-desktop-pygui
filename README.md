@@ -44,7 +44,7 @@ pip install -r requirements.txt
 
 - 左侧可**新建 / 切换会话**；每个会话可设置**工作区**（本地文件夹路径），对话与 ReAct 均仅允许访问该目录内的文件（工具会校验路径）。
 - **对话**：仅多轮问答，不执行工具。
-- **ReAct**：模型按 JSON 输出调用 `read_file` / `list_dir` / `run_shell`，直至 `finish` 或达到「最大步数」。
+- **ReAct**：使用 **LangChain** `create_agent`（底层 **LangGraph**），默认 **ChatOllama** 与 `llm` 配置一致；工具为 `read_file` / `list_dir` / `run_shell`（工作区内）。递归深度与「最大步数」相关，达到上限会停止。
 
 ## 运行
 
@@ -68,7 +68,8 @@ agent-ruyi72-desktop-pygui/
 │   ├── llm/ollama.py
 │   ├── storage/session_store.py
 │   ├── service/conversation.py
-│   └── agent/ (react.py, tools.py)
+│   ├── llm/chat_model.py
+│   └── agent/ (react_lc.py, tools.py)
 └── web/
     ├── index.html
     ├── style.css

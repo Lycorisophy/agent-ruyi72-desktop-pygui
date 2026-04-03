@@ -1,4 +1,4 @@
-"""Agent：ReAct 与工具。"""
+"""Agent：LangChain ReAct 与工具。"""
 
 from src.agent.react import run_react
 
