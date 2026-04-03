@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>如意72</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1 class="title">如意72</h1>
+    <p id="settings-line" class="settings"></p>
+  </header>
+  <main class="main">
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <form id="chat-form" class="composer">
+      <textarea
+        id="input"
+        class="input"
+        rows="3"
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+        autocomplete="off"
+      ></textarea>
+      <button type="submit" id="send" class="send">发送</button>
+    </form>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

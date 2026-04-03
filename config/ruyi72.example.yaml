@@ -1,0 +1,22 @@
+# 复制为项目根目录 ruyi72.yaml，或 ~/.ruyi72/ruyi72.yaml
+# 也可用环境变量 RUYI72_CONFIG 指向配置文件路径
+
+version: 1
+
+app:
+  title: 如意72
+  width: 960
+  height: 640
+
+llm:
+  provider: ollama
+  base_url: http://127.0.0.1:11434
+  model: qwen3.5:35b-a3b-q8_0-nothink
+  temperature: 0.6
+  max_tokens: 131072
+  # native: /api/chat；openai: /v1/chat/completions（部分网关只转发 /v1）
+  api_mode: openai
+  # 本机 loopback 默认不走系统代理；仍 HTTP 502 时可显式设为 false
+  # trust_env: false
+  # 本地默认可不填。远程 / Ollama Cloud / 需鉴权的反代：填写令牌，或设 OLLAMA_API_KEY
+  # api_key: ""

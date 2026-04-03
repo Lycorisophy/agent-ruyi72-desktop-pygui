@@ -1,8 +1,5 @@
-"""
-Agent 模块
-"""
+"""Agent 会话。"""
 
-from src.agent.base import Agent, AgentMode
-from src.agent.runner import AgentRunner
+from src.agent.session import AgentSession
 
-__all__ = ["Agent", "AgentMode", "AgentRunner"]
+__all__ = ["AgentSession"]

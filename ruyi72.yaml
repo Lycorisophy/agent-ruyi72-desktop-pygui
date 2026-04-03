@@ -1,0 +1,18 @@
+# 复制为项目根目录 ruyi72.yaml，或 ~/.ruyi72/ruyi72.yaml
+# 也可用环境变量 RUYI72_CONFIG 指向配置文件路径
+
+version: 1
+
+app:
+  title: 如意72
+  width: 960
+  height: 640
+
+llm:
+  provider: ollama
+  base_url: http://127.0.0.1:11434
+  model: qwen3.5:35b-a3b-q8_0-nothink
+  temperature: 0.6
+  max_tokens: 131072
+  api_mode: openai
+  api_key: "ollama-local-no-key-needed"
