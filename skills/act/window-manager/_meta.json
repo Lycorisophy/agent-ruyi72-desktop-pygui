@@ -1,0 +1,7 @@
+{
+  "name": "window-manager",
+  "description": "Window manager",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["window", "window manager", "app"]
+}

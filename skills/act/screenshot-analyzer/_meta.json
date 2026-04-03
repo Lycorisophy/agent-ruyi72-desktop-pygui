@@ -1,0 +1,7 @@
+{
+  "name": "screenshot-analyzer",
+  "description": "Screen capture and visual analysis",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["screenshot", "ocr", "vision", "screen"]
+}

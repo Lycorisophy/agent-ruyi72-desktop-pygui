@@ -1,0 +1,7 @@
+{
+  "name": "hot-news",
+  "version": "1.0.0",
+  "description": "Hot news",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/news.py"]
+}

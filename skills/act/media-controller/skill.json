@@ -1,0 +1,12 @@
+{
+  "name": "media-controller",
+  "version": "1.0.0",
+  "description": "Control music player and get playback info",
+  "entrypoints": [],
+  "files": [
+    "SKILL.md",
+    "skill.json",
+    "_meta.json",
+    "scripts/media_control.py"
+  ]
+}

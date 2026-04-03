@@ -1,0 +1,7 @@
+{
+  "name": "clipboard-manager",
+  "version": "1.0.0",
+  "description": "Manage clipboard content",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/clipboard.py"]
+}

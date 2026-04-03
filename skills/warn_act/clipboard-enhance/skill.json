@@ -1,0 +1,7 @@
+{
+  "name": "clipboard-enhance",
+  "version": "1.0.0",
+  "description": "Enhanced clipboard manager",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/clipboard.py"]
+}

@@ -7,6 +7,7 @@ from pathlib import Path
 from src.agent.react import run_react
 from src.config import LLMConfig, RuyiConfig
 from src.llm.ollama import OllamaClient, OllamaClientError
+from src.skills.loader import build_safe_skills_prompt, get_registry
 from src.storage.session_store import Mode, SessionMeta, SessionStore
 
 
@@ -97,6 +98,24 @@ class ConversationService:
         if not text:
             return False, "请输入内容。", True
 
+        # 特殊命令：加载技能文档（Ask 模式下的渐进披露）
+        if text.startswith("加载技能:"):
+            skill_name = text.split(":", 1)[1].strip()
+            if not skill_name:
+                return False, "技能名称为空，例如：加载技能: deep-research", True
+            reg = get_registry()
+            meta = reg.get_by_name(skill_name)
+            if meta is None:
+                return False, f"未找到名为 {skill_name!r} 的技能，请确认 name 是否与 SKILL.md 头部一致。", True
+            doc = reg.read_full(meta)
+            if meta.level >= 2:
+                prefix = (
+                    f"技能 {meta.name} 属于 warn_act(2) 高危技能：可能涉及磁盘/进程/服务/云盘/数据库/剪贴板等敏感操作。\n"
+                    f"在据此执行真实操作前，请你先向用户解释风险，并等待用户在对话中明确确认，例如：「我确认使用 {meta.name} 技能 执行 XXX」。\n\n"
+                )
+                return True, prefix + doc, False
+            return True, doc, False
+
         ws = (self._meta.workspace or "").strip()
         if not ws:
             return False, "请先在侧栏或上方设置「工作区」为有效文件夹路径。", True
@@ -105,19 +124,28 @@ class ConversationService:
         if not root.is_dir():
             return False, f"工作区不存在或不是目录: {root}", True
 
-        self._messages.append({"role": "user", "content": text})
-
         if self._meta.mode == "chat":
+            # 对话模式：在每次调用前临时注入 safe 技能目录作为 system 提示，不写入历史。
+            call_messages = list(self._messages)
+            call_messages.append({"role": "user", "content": text})
+            skills_prompt = build_safe_skills_prompt()
+            if skills_prompt:
+                call_messages = [{"role": "system", "content": skills_prompt}] + call_messages
+
             try:
-                reply = OllamaClient(self._llm).chat(self._messages)
+                reply = OllamaClient(self._llm).chat(call_messages)
             except OllamaClientError as e:
-                self._messages.pop()
                 return False, str(e), True
+
+            # 仅将真实 user/assistant 写入历史
+            self._messages.append({"role": "user", "content": text})
             self._messages.append({"role": "assistant", "content": reply})
             self._store.save_messages(self._active_id, self._messages)
             self._meta, _ = self._store.load(self._active_id)
             return True, reply, False
 
+        # ReAct 模式：历史中先追加用户消息，后续由 run_react 修改 messages 列表。
+        self._messages.append({"role": "user", "content": text})
         ok, out = run_react(
             self._llm,
             self._messages,

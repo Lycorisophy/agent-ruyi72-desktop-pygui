@@ -1,0 +1,7 @@
+{
+  "name": "schedule-manager",
+  "version": "1.0.0",
+  "description": "Schedule manager",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/schedule.py"]
+}

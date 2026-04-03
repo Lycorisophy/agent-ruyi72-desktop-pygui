@@ -1,0 +1,7 @@
+{
+  "name": "webcam-capture",
+  "description": "Webcam photo capture and visual analysis",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["webcam", "camera", "photo", "vision"]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "system-monitor-v2",
+  "description": "Advanced system monitoring",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["system", "monitor", "cpu", "memory", "disk", "network", "battery"]
+}

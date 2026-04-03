@@ -13,15 +13,26 @@ from langgraph.errors import GraphRecursionError
 from src.agent.tools import tool_list_dir, tool_read_file, tool_run_shell
 from src.config import LLMConfig
 from src.llm.chat_model import chat_model_from_config
+from src.skills.loader import build_react_skills_block, get_registry
 
 
 _REACT_SYSTEM = """你是具备工具调用能力的智能体，必须在给定「工作区」目录下协助用户完成任务。
 工作区绝对路径: {workspace}
 
-规则：
-- 仅使用提供的工具访问文件与执行命令；路径均为相对工作区的相对路径（如 "."、"src/foo.txt"）。
-- run_shell 在 Windows 上执行，请注意安全；长命令可能超时。
-- 先观察再行动；能直接回答时可直接回复用户，不必强行调用工具。
+你可以使用以下三类工具：
+- read_file / list_dir / run_shell：在工作区内读文件、列目录、执行命令。
+- load_skill：按需加载某个技能的完整说明（来自 skills 目录的 SKILL.md）。
+
+当前可用技能（仅元信息，不含实现细节）：
+
+{skills_block}
+
+风险等级说明：
+- safe(0)：只读/查询/分析，默认 Ask 模式即可使用。
+- act(1)：可能修改本地文件/状态，请谨慎使用。
+- warn_act(2)：高危操作（磁盘/进程/服务/云/数据库/剪贴板等），必须先征得用户明确同意后再调用。
+
+如需了解某个技能详情，请先调用 load_skill(name=技能名)，阅读返回的说明，再决定是否通过工具或脚本执行相关操作。
 """
 
 
@@ -43,7 +54,25 @@ def _make_tools(workspace: str):
         """在工作区根目录下执行一条 shell 命令。"""
         return tool_run_shell(ws, command)
 
-    return [read_file, list_dir, run_shell]
+    @tool
+    def load_skill(name: str) -> str:
+        """按技能名加载 SKILL.md 全文；warn_act(2) 技能会提示需用户确认后再使用。"""
+        reg = get_registry()
+        meta = reg.get_by_name(name)
+        if meta is None:
+            return f"未找到名为 {name!r} 的技能。请检查技能 name 是否与 SKILL.md 头部一致。"
+
+        if meta.level >= 2:
+            return (
+                f"技能 {meta.name} 属于 warn_act(2) 高危技能：可能涉及磁盘/进程/服务/云盘/数据库/剪贴板等敏感操作。\n"
+                f"在调用该技能相关脚本或命令前，必须先征得用户的明确同意，例如：\"我确认使用 {meta.name} 技能\"。\n\n"
+                f"以下为技能文档供你审阅：\n\n{reg.read_full(meta)}"
+            )
+
+        # safe / act 直接返回文档
+        return reg.read_full(meta)
+
+    return [read_file, list_dir, run_shell, load_skill]
 
 
 def _dicts_to_messages(msgs: list[dict[str, str]]) -> list[BaseMessage]:
@@ -117,7 +146,8 @@ def run_react(
 
     llm = chat_model_from_config(llm_cfg)
     tools = _make_tools(workspace)
-    system_prompt = _REACT_SYSTEM.format(workspace=workspace)
+    skills_block = build_react_skills_block()
+    system_prompt = _REACT_SYSTEM.format(workspace=workspace, skills_block=skills_block or "（当前未发现任何技能定义）")
 
     agent = create_agent(
         llm,

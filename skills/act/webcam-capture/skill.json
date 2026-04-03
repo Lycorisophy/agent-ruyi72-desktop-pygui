@@ -1,0 +1,12 @@
+{
+  "name": "webcam-capture",
+  "version": "1.0.0",
+  "description": "Capture photos from webcam and analyze with vision",
+  "entrypoints": [],
+  "files": [
+    "SKILL.md",
+    "skill.json",
+    "_meta.json",
+    "scripts/capture_photo.py"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "quick-commands",
+  "version": "1.0.0",
+  "description": "Quick commands",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/commands.py"]
+}

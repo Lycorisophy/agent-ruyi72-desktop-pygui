@@ -1,0 +1,7 @@
+{
+  "name": "window-manager",
+  "version": "1.0.0",
+  "description": "Manage windows",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/window_manager.py"]
+}

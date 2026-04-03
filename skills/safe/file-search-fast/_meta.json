@@ -1,0 +1,7 @@
+{
+  "name": "file-search-fast",
+  "description": "Fast file search using Everything",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["file", "search", "everything"]
+}

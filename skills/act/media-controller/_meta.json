@@ -1,0 +1,7 @@
+{
+  "name": "media-controller",
+  "description": "Music player control",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["media", "music", "player", "spotify", "control"]
+}

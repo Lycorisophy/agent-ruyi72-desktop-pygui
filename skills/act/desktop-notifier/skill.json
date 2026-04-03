@@ -1,0 +1,17 @@
+{
+  "name": "desktop-notifier",
+  "version": "1.0.0",
+  "description": "Send Windows desktop notifications with scheduling support",
+  "entrypoints": [],
+  "files": [
+    "SKILL.md",
+    "skill.json",
+    "_meta.json",
+    "scripts/send_notification.py",
+    "scripts/schedule_notification.py",
+    "scripts/list_notifications.py",
+    "scripts/cancel_notification.py",
+    "scripts/lib/__init__.py",
+    "scripts/lib/storage.py"
+  ]
+}

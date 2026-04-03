@@ -1,0 +1,7 @@
+{
+  "name": "quick-commands",
+  "description": "Quick commands",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["command", "quick", "shortcut"]
+}

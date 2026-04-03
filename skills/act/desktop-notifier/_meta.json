@@ -1,0 +1,7 @@
+{
+  "name": "desktop-notifier",
+  "description": "Send Windows desktop notifications",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["notification", "reminder", "windows"]
+}

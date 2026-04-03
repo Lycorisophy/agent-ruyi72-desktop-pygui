@@ -1,0 +1,12 @@
+{
+  "name": "system-monitor-v2",
+  "version": "1.0.0",
+  "description": "Advanced system monitoring with CPU, RAM, disk, network, and battery",
+  "entrypoints": [],
+  "files": [
+    "SKILL.md",
+    "skill.json",
+    "_meta.json",
+    "scripts/get_system_info.py"
+  ]
+}

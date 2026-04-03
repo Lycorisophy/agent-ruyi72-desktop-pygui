@@ -1,0 +1,7 @@
+{
+  "name": "clipboard-manager",
+  "description": "Clipboard manager",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["clipboard", "copy", "paste"]
+}

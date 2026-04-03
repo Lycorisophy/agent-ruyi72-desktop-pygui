@@ -1,0 +1,7 @@
+{
+  "name": "quick-notes",
+  "version": "1.0.0",
+  "description": "Quick notes",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/notes.py"]
+}

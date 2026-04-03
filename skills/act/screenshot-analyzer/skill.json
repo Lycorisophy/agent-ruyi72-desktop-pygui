@@ -1,0 +1,13 @@
+{
+  "name": "screenshot-analyzer",
+  "version": "1.0.0",
+  "description": "Capture screen and analyze with OCR and vision",
+  "entrypoints": [],
+  "files": [
+    "SKILL.md",
+    "skill.json",
+    "_meta.json",
+    "scripts/capture_screen.py",
+    "scripts/analyze_screenshot.py"
+  ]
+}

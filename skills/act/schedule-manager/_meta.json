@@ -1,0 +1,7 @@
+{
+  "name": "schedule-manager",
+  "description": "Schedule manager",
+  "version": "1.0.0",
+  "author": "Matrix Agent",
+  "tags": ["schedule", "calendar", "reminder"]
+}

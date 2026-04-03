@@ -1,0 +1,7 @@
+{
+  "name": "file-search-fast",
+  "version": "1.0.0",
+  "description": "Fast file search",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/search.py"]
+}

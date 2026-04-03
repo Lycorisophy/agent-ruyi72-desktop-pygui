@@ -1,0 +1,7 @@
+{
+  "name": "enhanced-memory",
+  "version": "1.0.0",
+  "description": "Enhanced memory system",
+  "entrypoints": [],
+  "files": ["SKILL.md", "skill.json", "_meta.json", "scripts/memory.py"]
+}
