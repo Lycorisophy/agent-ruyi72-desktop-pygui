@@ -8,9 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Mode = Literal["chat", "react"]
+SessionVariant = Literal["standard", "team"]
 
 
 def _utc_now_iso() -> str:
@@ -24,9 +25,19 @@ class SessionMeta(BaseModel):
     mode: Mode = "chat"
     react_max_steps: int = Field(default=8, ge=1, le=200)
     updated_at: str = ""
+    session_variant: SessionVariant = "standard"
+    team_size: int | None = Field(default=None, ge=2, le=4)
 
     def touch(self) -> None:
         self.updated_at = _utc_now_iso()
+
+    @model_validator(mode="after")
+    def _normalize_team_fields(self) -> SessionMeta:
+        if self.session_variant == "standard":
+            object.__setattr__(self, "team_size", None)
+        elif self.team_size is None:
+            raise ValueError("session_variant=team 时会话必须包含 team_size（2～4）")
+        return self
 
 
 class SessionStore:
@@ -60,6 +71,37 @@ class SessionStore:
             mode=mode,
             react_max_steps=react_max_steps,
             updated_at=_utc_now_iso(),
+            session_variant="standard",
+            team_size=None,
+        )
+        self._write_meta(d, meta)
+        self._write_messages(d, [])
+        return meta
+
+    def create_team_session(
+        self,
+        team_size: int,
+        *,
+        title: str | None = None,
+        workspace: str | None = None,
+        react_max_steps: int = 8,
+    ) -> SessionMeta:
+        if not (2 <= team_size <= 4):
+            raise ValueError("team_size 必须在 2～4 之间")
+        sid = uuid.uuid4().hex
+        d = self._session_dir(sid)
+        d.mkdir(parents=True, exist_ok=False)
+        ws = (workspace or "").strip() or str(Path.cwd())
+        t = (title or f"团队·{team_size}").strip() or f"团队·{team_size}"
+        meta = SessionMeta(
+            id=sid,
+            title=t,
+            workspace=ws,
+            mode="chat",
+            react_max_steps=react_max_steps,
+            updated_at=_utc_now_iso(),
+            session_variant="team",
+            team_size=team_size,
         )
         self._write_meta(d, meta)
         self._write_messages(d, [])

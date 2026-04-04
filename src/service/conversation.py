@@ -6,7 +6,8 @@ from pathlib import Path
 
 from src.agent.memory_tools import build_memory_bootstrap_block
 from src.agent.react import run_react
-from src.config import LLMConfig, RuyiConfig
+from src.agent.team_turn import run_team_turn
+from src.config import RuyiConfig
 from src.llm.ollama import OllamaClient, OllamaClientError
 from src.llm.prompts import build_system_block
 from src.skills.loader import build_safe_skills_prompt, get_registry
@@ -21,8 +22,9 @@ def resolve_sessions_root(cfg: RuyiConfig) -> Path:
 
 
 class ConversationService:
-    def __init__(self, llm_cfg: LLMConfig, store: SessionStore, *, react_default_steps: int) -> None:
-        self._llm = llm_cfg
+    def __init__(self, cfg: RuyiConfig, store: SessionStore, *, react_default_steps: int) -> None:
+        self._cfg = cfg
+        self._llm = cfg.llm
         self._store = store
         self._react_default = react_default_steps
         self._active_id: str | None = None
@@ -48,6 +50,20 @@ class ConversationService:
 
     def create_session(self, title: str | None = None) -> dict:
         m = self._store.create_session(title=title, react_max_steps=self._react_default)
+        return self.open_session(m.id)
+
+    def create_team_session(self, team_size: int, title: str | None = None) -> dict:
+        m_count = len(self._cfg.team.models)
+        if m_count < 2:
+            raise ValueError("请先在 ruyi72.yaml 中配置至少 2 条 team.models。")
+        cap = min(4, m_count)
+        if not (2 <= team_size <= cap):
+            raise ValueError(f"团队人数须在 2～{cap} 之间（当前已配置 {m_count} 个模型）。")
+        m = self._store.create_team_session(
+            team_size,
+            title=title,
+            react_max_steps=self._react_default,
+        )
         return self.open_session(m.id)
 
     def open_session(self, session_id: str) -> dict:
@@ -77,6 +93,8 @@ class ConversationService:
         if mode is not None:
             if mode not in ("chat", "react"):
                 raise ValueError("mode 必须是 chat 或 react")
+            if self._meta.session_variant == "team" and mode == "react":
+                raise ValueError("团队会话不能使用 ReAct 模式。")
             mode_t = mode  # type: ignore[assignment]
         steps: int | None = None
         if react_max_steps is not None:
@@ -133,6 +151,38 @@ class ConversationService:
         if self._memory_bootstrap_pending:
             memory_extra = build_memory_bootstrap_block()
             self._memory_bootstrap_pending = False
+
+        if self._meta.session_variant == "team":
+            ts = self._meta.team_size
+            m_count = len(self._cfg.team.models)
+            if ts is None or not (2 <= ts <= 4):
+                return False, "团队会话元数据无效（缺少 team_size）。", True
+            if ts > m_count:
+                return (
+                    False,
+                    f"当前配置的 team.models 仅 {m_count} 条，小于本会话的 team_size={ts}。"
+                    "请补充配置或改用标准会话。",
+                    True,
+                )
+            self._messages.append({"role": "user", "content": text})
+            try:
+                reply = run_team_turn(
+                    self._cfg,
+                    team_size=ts,
+                    prior_messages=list(self._messages[:-1]),
+                    user_text=text,
+                    memory_extra=memory_extra or None,
+                )
+            except ValueError as e:
+                self._messages.pop()
+                return False, str(e), True
+            except OllamaClientError as e:
+                self._messages.pop()
+                return False, str(e), True
+            self._messages.append({"role": "assistant", "content": reply})
+            self._store.save_messages(self._active_id, self._messages)
+            self._meta, _ = self._store.load(self._active_id)
+            return True, reply, False
 
         if self._meta.mode == "chat":
             # 对话模式：在每次调用前临时注入固定 system 提示 + safe 技能目录，不写入历史。

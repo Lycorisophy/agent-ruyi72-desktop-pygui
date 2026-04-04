@@ -16,3 +16,14 @@ llm:
   max_tokens: 131072
   api_mode: openai
   api_key: "ollama-local-no-key-needed"
+
+# 团队模式（可选）：按顺序对应 A1、A2…；至少 2 条才可创建团队会话；N ≤ min(4, 模型条数)。
+# suitable_for 会作为系统提示词发给团队链路中的每一个模型，供委派决策参考。
+# team:
+#   models:
+#     - model: "qwen2.5:7b"
+#       suitable_for: "小模型、低延迟，适合理解与拆分需求"
+#     - model: "qwen2.5-coder:32b"
+#       suitable_for: "擅长代码与仓库内操作"
+#     - model: "deepseek-r1:14b"
+#       suitable_for: "擅长长链推理与归纳"

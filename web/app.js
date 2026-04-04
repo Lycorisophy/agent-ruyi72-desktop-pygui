@@ -18,6 +18,57 @@ function el(tag, className, text) {
 }
 
 let currentSessionId = null;
+/** @type {object | null} */
+let lastSessionMeta = null;
+let teamMaxAgents = 0;
+
+function setGlobalLoadingText(msg) {
+  const el = document.getElementById("global-loading-text");
+  if (el) el.textContent = msg;
+}
+
+function updateTeamModeUi(meta) {
+  const isTeam = meta && meta.session_variant === "team";
+  document.querySelectorAll('input[name="mode"]').forEach((r) => {
+    if (isTeam) {
+      r.disabled = true;
+      if (r.value === "react") r.checked = false;
+      if (r.value === "chat") r.checked = true;
+    } else {
+      r.disabled = false;
+    }
+  });
+  const steps = document.getElementById("react-steps");
+  if (steps) steps.disabled = !!isTeam;
+}
+
+function openTeamModal() {
+  if (teamMaxAgents < 2) return;
+  const overlay = document.getElementById("team-modal-overlay");
+  const sel = document.getElementById("team-size-select");
+  if (!overlay || !sel) return;
+  sel.innerHTML = "";
+  const maxN = teamMaxAgents;
+  for (let n = 2; n <= maxN; n++) {
+    const opt = document.createElement("option");
+    opt.value = String(n);
+    opt.textContent = `${n} 个 Agent（A1…A${n}）`;
+    sel.appendChild(opt);
+  }
+  if (maxN >= 2) {
+    const prefer = Math.min(3, maxN);
+    sel.value = String(prefer);
+  }
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+}
+
+function closeTeamModal() {
+  const overlay = document.getElementById("team-modal-overlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+}
 
 function renderMessages(messages) {
   const box = document.getElementById("messages");
@@ -109,6 +160,15 @@ async function loadSettings() {
     hint.textContent = s.sessions_root
       ? `历史目录: ${s.sessions_root}`
       : "";
+    teamMaxAgents = s.team_max_agents != null ? s.team_max_agents : 0;
+    const teamBtn = document.getElementById("btn-team-session");
+    if (teamBtn) {
+      teamBtn.disabled = teamMaxAgents < 2;
+      teamBtn.title =
+        teamMaxAgents < 2
+          ? "请先在 ruyi72.yaml 配置至少 2 条 team.models"
+          : `可创建 2～${teamMaxAgents} 人的团队会话`;
+    }
   } catch (e) {
     line.textContent = "无法读取配置：" + String(e);
   }
@@ -116,6 +176,7 @@ async function loadSettings() {
 
 function applyMetaToForm(meta) {
   if (!meta) return;
+  lastSessionMeta = meta;
   currentSessionId = meta.id;
   const ws = document.getElementById("workspace");
   ws.value = meta.workspace || "";
@@ -126,6 +187,7 @@ function applyMetaToForm(meta) {
   });
   const steps = document.getElementById("react-steps");
   steps.value = meta.react_max_steps != null ? meta.react_max_steps : 8;
+  updateTeamModeUi(meta);
 }
 
 async function renderSessionList() {
@@ -137,11 +199,11 @@ async function renderSessionList() {
     li.dataset.id = s.id;
     if (s.id === currentSessionId) li.classList.add("active");
     const t = el("div", "session-item-title", s.title || s.id);
-    const sub = el(
-      "div",
-      "session-item-meta",
-      `${s.mode || "chat"} · ${(s.updated_at || "").slice(0, 19)}`
-    );
+    let subLine = `${s.mode || "chat"} · ${(s.updated_at || "").slice(0, 19)}`;
+    if (s.session_variant === "team" && s.team_size != null) {
+      subLine = `团队·${s.team_size} · ${subLine}`;
+    }
+    const sub = el("div", "session-item-meta", subLine);
     li.appendChild(t);
     li.appendChild(sub);
     li.addEventListener("click", () => openSession(s.id));
@@ -190,7 +252,13 @@ async function onSubmit(e) {
   if (!text) return;
 
   input.value = "";
+  const isTeam =
+    lastSessionMeta && lastSessionMeta.session_variant === "team";
   setBusy(true);
+  if (isTeam) {
+    setGlobalLoading(true);
+    setGlobalLoadingText("团队多模型处理中，请稍候…");
+  }
   try {
     await pushWorkspaceAndMode();
     const res = await api().send_message(text);
@@ -202,6 +270,10 @@ async function onSubmit(e) {
     appendMessage("assistant", "调用失败：" + String(err), true);
   } finally {
     setBusy(false);
+    if (isTeam) {
+      setGlobalLoading(false);
+      setGlobalLoadingText("请稍候…");
+    }
   }
 }
 
@@ -293,10 +365,15 @@ function init() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    const overlay = document.getElementById("memory-modal-overlay");
-    if (!overlay || overlay.classList.contains("hidden")) return;
     const loading = document.getElementById("global-loading");
     if (loading && !loading.classList.contains("hidden")) return;
+    const teamOv = document.getElementById("team-modal-overlay");
+    if (teamOv && !teamOv.classList.contains("hidden")) {
+      closeTeamModal();
+      return;
+    }
+    const overlay = document.getElementById("memory-modal-overlay");
+    if (!overlay || overlay.classList.contains("hidden")) return;
     closeMemoryModal();
   });
 
@@ -308,6 +385,7 @@ function init() {
       return;
     }
     setGlobalLoading(true);
+    setGlobalLoadingText("正在提取记忆，请稍候…");
     setMemoryModalBusy(true);
     try {
       const res = await api().extract_memory(text);
@@ -329,9 +407,47 @@ function init() {
       appendMessage("assistant", "记忆提取异常：" + String(e), true);
     } finally {
       setGlobalLoading(false);
+      setGlobalLoadingText("请稍候…");
       setMemoryModalBusy(false);
       if (ta) ta.value = "";
       closeMemoryModal();
+    }
+  });
+
+  document.getElementById("btn-team-session").addEventListener("click", () => {
+    if (teamMaxAgents < 2) return;
+    openTeamModal();
+  });
+
+  document.getElementById("team-cancel").addEventListener("click", () => {
+    closeTeamModal();
+  });
+
+  document
+    .getElementById("team-modal-overlay")
+    .addEventListener("click", (ev) => {
+      if (ev.target.id === "team-modal-overlay") closeTeamModal();
+    });
+
+  document.getElementById("team-confirm").addEventListener("click", async () => {
+    const sel = document.getElementById("team-size-select");
+    const n = sel ? parseInt(sel.value, 10) : 2;
+    if (Number.isNaN(n) || n < 2) return;
+    setBusy(true);
+    try {
+      const r = await api().create_team_session(n, null);
+      if (!r.ok) {
+        appendMessage("assistant", r.error || "创建团队会话失败", true);
+        return;
+      }
+      applyMetaToForm(r.meta);
+      renderMessages(r.messages);
+      await renderSessionList();
+      closeTeamModal();
+    } catch (e) {
+      appendMessage("assistant", "创建团队会话失败：" + String(e), true);
+    } finally {
+      setBusy(false);
     }
   });
 

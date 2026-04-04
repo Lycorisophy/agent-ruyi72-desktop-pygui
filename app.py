@@ -32,6 +32,9 @@ class Api:
     def get_settings_snapshot(self) -> dict:
         llm = self._cfg.llm
         has_key = resolve_llm_api_key(llm) is not None
+        tm = len(self._cfg.team.models)
+        # 至少 2 个槽位才允许团队会话；M=1 时 team_max_agents 须为 0，避免前端误判
+        team_max_agents = min(4, tm) if tm >= 2 else 0
         return {
             "title": self._cfg.app.title,
             "model": llm.model,
@@ -41,6 +44,8 @@ class Api:
             "api_mode": llm.api_mode,
             "trust_env": effective_trust_env(llm),
             "sessions_root": str(resolve_sessions_root(self._cfg)),
+            "team_model_count": tm,
+            "team_max_agents": team_max_agents,
         }
 
     def list_sessions(self) -> list:
@@ -48,6 +53,13 @@ class Api:
 
     def create_session(self, title: str | None = None) -> dict:
         return self._svc.create_session(title=title)
+
+    def create_team_session(self, team_size: int, title: str | None = None) -> dict:
+        try:
+            data = self._svc.create_team_session(int(team_size), title=title)
+            return {"ok": True, **data}
+        except ValueError as e:
+            return {"ok": False, "error": str(e), "meta": None, "messages": []}
 
     def open_session(self, session_id: str) -> dict:
         return self._svc.open_session(session_id)
@@ -94,7 +106,7 @@ def main() -> None:
     cfg = load_config()
     store = SessionStore(resolve_sessions_root(cfg))
     svc = ConversationService(
-        cfg.llm,
+        cfg,
         store,
         react_default_steps=cfg.agent.react_max_steps_default,
     )

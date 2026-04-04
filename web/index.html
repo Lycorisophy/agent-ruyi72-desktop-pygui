@@ -10,7 +10,10 @@
   <aside class="sidebar">
     <div class="sidebar-head">
       <h2 class="sidebar-title">会话</h2>
-      <button type="button" id="btn-new-session" class="btn btn-small">新建</button>
+      <div class="sidebar-head-actions">
+        <button type="button" id="btn-new-session" class="btn btn-small">新建</button>
+        <button type="button" id="btn-team-session" class="btn btn-small" title="需配置至少 2 条 team.models">团队</button>
+      </div>
     </div>
     <ul id="session-list" class="session-list"></ul>
     <p id="storage-hint" class="storage-hint"></p>
@@ -78,7 +81,23 @@
   <div id="global-loading" class="global-loading hidden" aria-busy="true" aria-hidden="true">
     <div class="global-loading-inner">
       <div class="spinner" aria-hidden="true"></div>
-      <p class="global-loading-text">正在提取记忆，请稍候…</p>
+      <p id="global-loading-text" class="global-loading-text">请稍候…</p>
+    </div>
+  </div>
+
+  <!-- 团队会话：选择人数 -->
+  <div id="team-modal-overlay" class="memory-modal-overlay hidden" aria-hidden="true">
+    <div class="memory-modal" role="dialog" aria-labelledby="team-modal-title">
+      <h3 id="team-modal-title" class="memory-modal-title">创建团队会话</h3>
+      <p class="memory-modal-hint">链式多模型：用户消息从 A1 进入，可委派至 A2…；末位收口。人数受配置中 team.models 条数与上限 4 约束。</p>
+      <label class="team-modal-field">
+        <span>Agent 人数 N（2～4，且不超过已配置模型数）</span>
+        <select id="team-size-select" class="field-input"></select>
+      </label>
+      <div class="memory-modal-actions">
+        <button type="button" id="team-cancel" class="btn">取消</button>
+        <button type="button" id="team-confirm" class="btn btn-primary">创建</button>
+      </div>
     </div>
   </div>
 

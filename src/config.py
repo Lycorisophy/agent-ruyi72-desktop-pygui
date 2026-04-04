@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 _DEFAULT_APP_TITLE = "如意72"
 
@@ -41,12 +41,49 @@ class AgentConfig(BaseModel):
     react_max_steps_default: int = Field(default=8, ge=1, le=200)
 
 
+class TeamModelEntry(BaseModel):
+    """团队链路槽位：顺序对应 A1、A2…；与顶层 llm 合并后仅 model 不同。"""
+
+    model: str = Field(
+        min_length=1,
+        description="Ollama 等可用的模型标识；去空白后须非空。",
+    )
+    suitable_for: str = Field(
+        default="",
+        description="用户填写：该模型适合做什么，会进入团队模式系统提示词（所有槽位可见）。",
+    )
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def model_strip_nonempty(cls, v: Any) -> str:
+        if v is None:
+            raise ValueError("team.models 条目的 model 不能省略或为 null")
+        s = str(v).strip()
+        if not s:
+            raise ValueError("team.models 每条目的 model 必须为非空字符串（去空白后不能为空）")
+        return s
+
+    @field_validator("suitable_for", mode="before")
+    @classmethod
+    def suitable_for_strip(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        return str(v).strip()
+
+
+class TeamConfig(BaseModel):
+    """至少 2 条 models 时才允许团队会话；N ≤ min(4, len(models))。"""
+
+    models: list[TeamModelEntry] = Field(default_factory=list)
+
+
 class RuyiConfig(BaseModel):
     version: int = 1
     app: AppConfig = Field(default_factory=AppConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    team: TeamConfig = Field(default_factory=TeamConfig)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -86,6 +123,10 @@ def load_config_file(path: Path) -> dict[str, Any]:
 
 
 def load_config() -> RuyiConfig:
+    """
+    合并默认配置与首个命中的 YAML，经 Pydantic 校验。
+    team.models 中每条须含非空 model（见 TeamModelEntry）；校验失败抛出 ValidationError。
+    """
     merged: dict[str, Any] = _default_dict()
     for p in config_search_paths():
         try:

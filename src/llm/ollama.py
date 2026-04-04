@@ -55,9 +55,11 @@ class OllamaClient:
             return self._openai_chat_url
         return self._native_chat_url
 
-    def chat(self, messages: list[dict[str, str]]) -> str:
+    def chat(self, messages: list[dict[str, str]], *, model_override: str | None = None) -> str:
         if self._cfg.provider != "ollama":
             raise OllamaClientError(f"当前仅支持 provider=ollama，收到: {self._cfg.provider}")
+
+        model_name = (model_override or "").strip() or self._cfg.model
 
         headers: dict[str, str] = {}
         key = resolve_llm_api_key(self._cfg)
@@ -69,7 +71,7 @@ class OllamaClient:
 
         if self._cfg.api_mode == "openai":
             body: dict[str, Any] = {
-                "model": self._cfg.model,
+                "model": model_name,
                 "messages": messages,
                 "stream": False,
                 "temperature": self._cfg.temperature,
@@ -77,7 +79,7 @@ class OllamaClient:
             }
         else:
             body = {
-                "model": self._cfg.model,
+                "model": model_name,
                 "messages": messages,
                 "stream": False,
                 "options": {
