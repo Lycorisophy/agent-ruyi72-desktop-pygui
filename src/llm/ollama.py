@@ -82,6 +82,8 @@ class OllamaClient:
                 "model": model_name,
                 "messages": messages,
                 "stream": False,
+                # Ollama「思考」类模型：默认可能输出 reasoning；显式关闭仅要最终回答
+                "think": False,
                 "options": {
                     "temperature": self._cfg.temperature,
                     "num_predict": self._cfg.max_tokens,

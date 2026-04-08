@@ -29,10 +29,14 @@ def chat_model_from_config(cfg: LLMConfig) -> BaseChatModel:
     if headers:
         sync_kw["headers"] = headers
 
-    return ChatOllama(
-        base_url=cfg.base_url.rstrip("/"),
-        model=cfg.model,
-        temperature=cfg.temperature,
-        num_predict=cfg.max_tokens,
-        sync_client_kwargs=sync_kw,
-    )
+    kw: dict = {
+        "base_url": cfg.base_url.rstrip("/"),
+        "model": cfg.model,
+        "temperature": cfg.temperature,
+        "num_predict": cfg.max_tokens,
+        "sync_client_kwargs": sync_kw,
+    }
+    try:
+        return ChatOllama(**kw, reasoning=False)
+    except TypeError:
+        return ChatOllama(**kw)

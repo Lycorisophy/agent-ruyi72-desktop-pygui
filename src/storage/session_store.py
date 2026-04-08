@@ -175,7 +175,10 @@ class SessionStore:
         if title is not None:
             data["title"] = title.strip() or meta.title
         if workspace is not None:
-            data["workspace"] = workspace.strip()
+            ws = workspace.strip()
+            if len(ws) >= 2 and ws[0] == ws[-1] and ws[0] in "\"'":
+                ws = ws[1:-1].strip()
+            data["workspace"] = ws
         if mode is not None:
             data["mode"] = mode
         if react_max_steps is not None:

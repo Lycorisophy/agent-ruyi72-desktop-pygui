@@ -10,6 +10,96 @@ function waitForPywebview() {
 
 const api = () => window.pywebview.api;
 
+function copyToClipboard(text) {
+  const s = text == null ? "" : String(text);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(s);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement("textarea");
+    ta.value = s;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      if (document.execCommand("copy")) resolve();
+      else reject(new Error("copy failed"));
+    } catch (e) {
+      reject(e);
+    } finally {
+      document.body.removeChild(ta);
+    }
+  });
+}
+
+function bubbleBodyClass(role, isError) {
+  const base = "msg msg-body";
+  if (role === "user") return `${base} msg-user`;
+  if (role === "system") return `${base} msg-system`;
+  if (isError) return `${base} msg-error`;
+  if (role === "pending") return `${base} msg-pending msg-assistant`;
+  return `${base} msg-assistant`;
+}
+
+function bubbleWrapClass(role, isError) {
+  if (role === "user") return "msg-wrap msg-wrap-user";
+  if (role === "system") return "msg-wrap msg-wrap-system";
+  if (isError) return "msg-wrap msg-wrap-error";
+  if (role === "pending") return "msg-wrap msg-wrap-assistant";
+  return "msg-wrap msg-wrap-assistant";
+}
+
+/**
+ * @param {string} role user | assistant | system | pending
+ * @param {boolean} isError
+ * @param {{ initialText?: string, withCopy?: boolean }} [opts]
+ */
+function createMessageBubble(role, isError, opts) {
+  const o = opts || {};
+  const withCopy = o.withCopy !== false;
+  const wrap = el("div", bubbleWrapClass(role, isError));
+  const body = el(
+    "div",
+    bubbleBodyClass(role, isError),
+    o.initialText !== undefined ? o.initialText : undefined
+  );
+  wrap.appendChild(body);
+  if (withCopy) {
+    const row = el("div", "msg-copy-row");
+    const btn = el("button", "btn-msg-copy", "全部复制");
+    btn.type = "button";
+    btn.addEventListener("click", async () => {
+      try {
+        await copyToClipboard(body.textContent || "");
+        const prev = btn.textContent;
+        btn.textContent = "已复制";
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      } catch (_) {
+        /* ignore */
+      }
+    });
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  }
+  return { wrap, body };
+}
+
+function removeEmptyPlaceholderIfAny(box) {
+  const bodies = box.querySelectorAll(".msg-body.msg-system");
+  for (const b of bodies) {
+    if (b.textContent.includes("暂无消息")) {
+      const w = b.closest(".msg-wrap");
+      if (w) w.remove();
+      else b.remove();
+      break;
+    }
+  }
+}
+
 function el(tag, className, text) {
   const n = document.createElement(tag);
   if (className) n.className = className;
@@ -21,10 +111,58 @@ let currentSessionId = null;
 /** @type {object | null} */
 let lastSessionMeta = null;
 let teamMaxAgents = 0;
+/** 递增后可使进行中的打字机动画停止（避免切换会话时旧动画写新 DOM） */
+let messageRenderGen = 0;
+
+function normalizeWorkspaceInput(raw) {
+  let s = (raw || "").trim();
+  if (!s) return "";
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+function startTypewriter(node, fullText, renderGen) {
+  if (!node) return;
+  node.textContent = "";
+  const charsPerTick = 4;
+  let i = 0;
+  function tick() {
+    if (renderGen !== messageRenderGen) return;
+    i = Math.min(i + charsPerTick, fullText.length);
+    node.textContent = fullText.slice(0, i);
+    const box = document.getElementById("messages");
+    if (box) box.scrollTop = box.scrollHeight;
+    if (i < fullText.length) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
 
 function setGlobalLoadingText(msg) {
   const el = document.getElementById("global-loading-text");
   if (el) el.textContent = msg;
+}
+
+let wsApplyStatusTimer = null;
+
+function setWsApplyStatus(text, clearAfterMs) {
+  const st = document.getElementById("ws-apply-status");
+  if (!st) return;
+  if (wsApplyStatusTimer) {
+    clearTimeout(wsApplyStatusTimer);
+    wsApplyStatusTimer = null;
+  }
+  st.textContent = text || "";
+  if (clearAfterMs && text) {
+    wsApplyStatusTimer = setTimeout(() => {
+      st.textContent = "";
+      wsApplyStatusTimer = null;
+    }, clearAfterMs);
+  }
 }
 
 function updateTeamModeUi(meta) {
@@ -70,30 +208,44 @@ function closeTeamModal() {
   overlay.setAttribute("aria-hidden", "true");
 }
 
-function renderMessages(messages) {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.instant] 默认 true：服务端同步列表一次写入，避免长历史打字机拖慢
+ */
+function renderMessages(messages, options) {
+  const opts = options || {};
+  const instant = opts.instant !== false;
   const box = document.getElementById("messages");
   box.innerHTML = "";
+  messageRenderGen += 1;
+  const gen = messageRenderGen;
+  const emptyHint = "暂无消息。设置工作区并选择模式后发送。";
   if (!messages || !messages.length) {
-    box.appendChild(
-      el("div", "msg msg-system", "暂无消息。设置工作区并选择模式后发送。")
-    );
+    const { wrap, body } = createMessageBubble("system", false, {
+      initialText: instant ? emptyHint : undefined,
+    });
+    box.appendChild(wrap);
+    if (!instant) startTypewriter(body, emptyHint, gen);
+    box.scrollTop = box.scrollHeight;
     return;
   }
   for (const m of messages) {
     const role = m.role;
     const text = m.content || "";
     if (role === "system") {
-      const node = el("div", "msg msg-system", text);
-      box.appendChild(node);
+      const { wrap, body } = createMessageBubble("system", false, {
+        initialText: instant ? text : undefined,
+      });
+      box.appendChild(wrap);
+      if (!instant) startTypewriter(body, text, gen);
       continue;
     }
-    const cls =
-      role === "user"
-        ? "msg msg-user"
-        : role === "assistant"
-          ? "msg msg-assistant"
-          : "msg msg-assistant";
-    box.appendChild(el("div", cls, text));
+    const r = role === "user" ? "user" : "assistant";
+    const { wrap, body } = createMessageBubble(r, false, {
+      initialText: instant ? text : undefined,
+    });
+    box.appendChild(wrap);
+    if (!instant) startTypewriter(body, text, gen);
   }
   box.scrollTop = box.scrollHeight;
 }
@@ -214,19 +366,21 @@ async function renderSessionList() {
 async function openSession(id) {
   const data = await api().open_session(id);
   applyMetaToForm(data.meta);
-  renderMessages(data.messages);
+  renderMessages(data.messages, { instant: true });
   await renderSessionList();
 }
 
 async function refreshActive() {
   const data = await api().get_active_session();
   applyMetaToForm(data.meta);
-  renderMessages(data.messages);
+  renderMessages(data.messages, { instant: true });
   await renderSessionList();
 }
 
 async function pushWorkspaceAndMode() {
-  const workspace = document.getElementById("workspace").value.trim();
+  const wsEl = document.getElementById("workspace");
+  const workspace = normalizeWorkspaceInput(wsEl.value);
+  wsEl.value = workspace;
   const mode = document.querySelector('input[name="mode"]:checked').value;
   let react_max_steps = parseInt(
     document.getElementById("react-steps").value,
@@ -245,6 +399,18 @@ async function loadSettingsAndSession() {
   await refreshActive();
 }
 
+function appendMessageInstant(role, text, isError) {
+  const box = document.getElementById("messages");
+  removeEmptyPlaceholderIfAny(box);
+  const r = role === "user" ? "user" : "assistant";
+  const { wrap, body } = createMessageBubble(r, isError, {
+    initialText: text || "",
+  });
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+  return body;
+}
+
 async function onSubmit(e) {
   e.preventDefault();
   const input = document.getElementById("input");
@@ -254,42 +420,52 @@ async function onSubmit(e) {
   input.value = "";
   const isTeam =
     lastSessionMeta && lastSessionMeta.session_variant === "team";
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const pendingLabel =
+    mode === "react" ? "正在推理与执行…" : "正在思考…";
+
+  appendMessageInstant("user", text, false);
+  const box = document.getElementById("messages");
+  const { wrap: pendingWrap } = createMessageBubble("pending", false, {
+    initialText: pendingLabel,
+  });
+  box.appendChild(pendingWrap);
+  const pendingEl = pendingWrap;
+  box.scrollTop = box.scrollHeight;
+
   setBusy(true);
-  if (isTeam) {
-    setGlobalLoading(true);
-    setGlobalLoadingText("团队多模型处理中，请稍候…");
-  }
+  setGlobalLoading(true);
+  setGlobalLoadingText(
+    isTeam ? "团队多模型处理中，请稍候…" : "正在生成回复…"
+  );
   try {
     await pushWorkspaceAndMode();
     const res = await api().send_message(text);
+    pendingEl.remove();
     await refreshActive();
     if (!res.ok && res.append_error) {
       appendMessage("assistant", res.message, true);
     }
   } catch (err) {
+    pendingEl.remove();
     appendMessage("assistant", "调用失败：" + String(err), true);
   } finally {
     setBusy(false);
-    if (isTeam) {
-      setGlobalLoading(false);
-      setGlobalLoadingText("请稍候…");
-    }
+    setGlobalLoading(false);
+    setGlobalLoadingText("请稍候…");
   }
 }
 
 function appendMessage(role, text, isError) {
   const box = document.getElementById("messages");
-  const empty = box.querySelector(".msg-system");
-  if (empty && empty.textContent.includes("暂无消息")) empty.remove();
-  const cls =
-    role === "user"
-      ? "msg msg-user"
-      : isError
-        ? "msg msg-error"
-        : "msg msg-assistant";
-  const node = el("div", cls, text);
-  box.appendChild(node);
-  box.scrollTop = box.scrollHeight;
+  removeEmptyPlaceholderIfAny(box);
+  const r = role === "user" ? "user" : "assistant";
+  const { wrap, body } = createMessageBubble(r, isError, {
+    initialText: undefined,
+  });
+  box.appendChild(wrap);
+  const gen = messageRenderGen;
+  startTypewriter(body, text || "", gen);
 }
 
 function init() {
@@ -314,16 +490,33 @@ function init() {
     }
   });
 
-  document.getElementById("btn-apply-ws").addEventListener("click", async () => {
-    setBusy(true);
-    try {
-      await pushWorkspaceAndMode();
-      await refreshActive();
-    } catch (e) {
-      appendMessage("assistant", "应用失败：" + String(e), true);
-    } finally {
-      setBusy(false);
-    }
+  document.getElementById("btn-apply-ws").addEventListener("click", () => {
+    const btn = document.getElementById("btn-apply-ws");
+    if (!btn || btn.disabled) return;
+    if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "应用中…";
+    setWsApplyStatus("正在保存工作区与模式…");
+
+    queueMicrotask(async () => {
+      setBusy(true);
+      setGlobalLoading(true);
+      setGlobalLoadingText("正在应用工作区与模式…");
+      try {
+        await pushWorkspaceAndMode();
+        await refreshActive();
+        setWsApplyStatus("已应用", 2000);
+      } catch (e) {
+        setWsApplyStatus("应用失败：" + String(e));
+        appendMessage("assistant", "应用失败：" + String(e), true);
+      } finally {
+        setGlobalLoading(false);
+        setGlobalLoadingText("请稍候…");
+        setBusy(false);
+        btn.disabled = false;
+        btn.textContent = btn.dataset.defaultLabel || "应用";
+      }
+    });
   });
 
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
@@ -441,7 +634,7 @@ function init() {
         return;
       }
       applyMetaToForm(r.meta);
-      renderMessages(r.messages);
+      renderMessages(r.messages, { instant: true });
       await renderSessionList();
       closeTeamModal();
     } catch (e) {
