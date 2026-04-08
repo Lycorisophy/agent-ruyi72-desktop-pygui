@@ -151,6 +151,7 @@ def run_react(
     workspace: str,
     max_steps: int,
     memory_bootstrap: str | None = None,
+    extra_system: str | None = None,
 ) -> tuple[bool, str]:
     """
     使用 LangChain create_agent（底层为 LangGraph）执行工具循环。
@@ -169,6 +170,8 @@ def run_react(
     system_prompt = build_system_block(extra_system=react_system)
     if memory_bootstrap:
         system_prompt = system_prompt + "\n\n" + memory_bootstrap
+    if extra_system:
+        system_prompt = system_prompt + "\n\n" + extra_system.strip()
     system_prompt = system_prompt + "\n\n" + action_card_system_hint()
 
     agent = create_agent(

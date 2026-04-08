@@ -137,6 +137,17 @@ const SESSION_SORT_MODES = [
 ];
 const SESSION_GROUP_MODES = [GROUP_NONE, GROUP_TYPE, GROUP_TIME];
 
+const KB_PRESET_LABELS = {
+  general: "通用",
+  ingest: "收录整理",
+  summarize: "摘要索引",
+  qa: "问答检索",
+};
+
+function kbPresetLabel(p) {
+  return KB_PRESET_LABELS[p] || p || "通用";
+}
+
 function getSessionSortMode() {
   try {
     const v = localStorage.getItem(LS_SESSION_SORT);
@@ -237,8 +248,12 @@ function groupSessions(sorted, mode) {
   }
   if (mode === GROUP_TYPE) {
     const team = sorted.filter((s) => s.session_variant === "team");
-    const std = sorted.filter((s) => s.session_variant !== "team");
+    const kb = sorted.filter((s) => s.session_variant === "knowledge");
+    const std = sorted.filter(
+      (s) => s.session_variant !== "team" && s.session_variant !== "knowledge"
+    );
     const out = [];
+    if (kb.length) out.push({ label: "知识库", items: kb });
     if (team.length) out.push({ label: "团队", items: team });
     if (std.length) out.push({ label: "普通", items: std });
     if (!out.length) out.push({ label: "", items: [] });
@@ -276,6 +291,8 @@ function appendSessionRow(s, parentUl) {
   let subLine = `${s.mode || "chat"} · ${(s.updated_at || "").slice(0, 19)}`;
   if (s.session_variant === "team" && s.team_size != null) {
     subLine = `团队·${s.team_size} · ${subLine}`;
+  } else if (s.session_variant === "knowledge") {
+    subLine = `知识库·${kbPresetLabel(s.kb_preset)} · ${subLine}`;
   }
   const sub = el("div", "session-item-meta", subLine);
   body.appendChild(t);
@@ -513,12 +530,16 @@ function setWsApplyStatus(text, clearAfterMs) {
 
 function updateTeamModeUi(meta) {
   const isTeam = meta && meta.session_variant === "team";
+  const isKb = meta && meta.session_variant === "knowledge";
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
     if (isTeam) {
       r.disabled = true;
       if (r.value === "react") r.checked = false;
       if (r.value === "persona") r.checked = false;
       if (r.value === "chat") r.checked = true;
+    } else if (isKb) {
+      r.disabled = r.value === "persona";
+      if (r.value === "persona") r.checked = false;
     } else {
       r.disabled = false;
     }
@@ -531,7 +552,10 @@ function updateTeamModeUi(meta) {
 function updatePersonaComposerUi(meta) {
   const m = meta || lastSessionMeta;
   const isPersona =
-    m && m.mode === "persona" && m.session_variant !== "team";
+    m &&
+    m.mode === "persona" &&
+    m.session_variant !== "team" &&
+    m.session_variant !== "knowledge";
   const btn = document.getElementById("btn-persona-interrupt");
   if (btn) btn.classList.toggle("hidden", !isPersona);
 }
@@ -559,6 +583,24 @@ function openTeamModal() {
 
 function closeTeamModal() {
   const overlay = document.getElementById("team-modal-overlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+}
+
+function openKbModal() {
+  const overlay = document.getElementById("kb-modal-overlay");
+  const titleInp = document.getElementById("kb-title-input");
+  const preset = document.getElementById("kb-preset-select");
+  if (!overlay) return;
+  if (titleInp) titleInp.value = "";
+  if (preset) preset.value = "general";
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+}
+
+function closeKbModal() {
+  const overlay = document.getElementById("kb-modal-overlay");
   if (!overlay) return;
   overlay.classList.add("hidden");
   overlay.setAttribute("aria-hidden", "true");
@@ -1156,9 +1198,11 @@ async function onSubmit(e) {
   input.value = "";
   const isTeam =
     lastSessionMeta && lastSessionMeta.session_variant === "team";
+  const isKb =
+    lastSessionMeta && lastSessionMeta.session_variant === "knowledge";
   const mode = document.querySelector('input[name="mode"]:checked').value;
 
-  if (mode === "persona" && !isTeam) {
+  if (mode === "persona" && !isTeam && !isKb) {
     setBusy(true);
     try {
       await pushWorkspaceAndMode();
@@ -1297,6 +1341,51 @@ function init() {
     }
   });
 
+  document.getElementById("btn-kb-session").addEventListener("click", () => {
+    openKbModal();
+  });
+
+  document.getElementById("kb-cancel").addEventListener("click", () => {
+    closeKbModal();
+  });
+
+  document
+    .getElementById("kb-modal-overlay")
+    .addEventListener("click", (ev) => {
+      if (ev.target.id !== "kb-modal-overlay") return;
+      closeKbModal();
+    });
+
+  document.getElementById("kb-confirm").addEventListener("click", async () => {
+    const presetEl = document.getElementById("kb-preset-select");
+    const titleInp = document.getElementById("kb-title-input");
+    const preset = presetEl ? presetEl.value : "general";
+    const titleRaw = titleInp ? titleInp.value.trim() : "";
+    setBusy(true);
+    try {
+      const res = await api().create_knowledge_session(
+        preset,
+        titleRaw || null
+      );
+      if (!res.ok) {
+        window.alert(res.error || "创建知识库会话失败");
+        return;
+      }
+      closeKbModal();
+      if (res.meta) applyMetaToForm(res.meta);
+      if (res.messages) renderMessages(res.messages, { instant: true });
+      await renderSessionList();
+      setWsApplyStatus(
+        "知识库会话已创建：请将「工作区」设为文档根目录后点击「应用」。",
+        10000
+      );
+    } catch (e) {
+      window.alert("创建知识库会话失败：" + String(e));
+    } finally {
+      setBusy(false);
+    }
+  });
+
   document.getElementById("btn-apply-ws").addEventListener("click", () => {
     const btn = document.getElementById("btn-apply-ws");
     if (!btn || btn.disabled) return;
@@ -1367,6 +1456,11 @@ function init() {
     if (e.key !== "Escape") return;
     const loading = document.getElementById("global-loading");
     if (loading && !loading.classList.contains("hidden")) return;
+    const kbOv = document.getElementById("kb-modal-overlay");
+    if (kbOv && !kbOv.classList.contains("hidden")) {
+      closeKbModal();
+      return;
+    }
     const teamOv = document.getElementById("team-modal-overlay");
     if (teamOv && !teamOv.classList.contains("hidden")) {
       closeTeamModal();

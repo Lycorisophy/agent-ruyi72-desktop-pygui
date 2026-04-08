@@ -16,6 +16,7 @@ from src.agent.react import run_react
 from src.agent.team_turn import run_team_turn
 from src.config import LLMConfig, PersonaConfig, RuyiConfig
 from src.llm.ollama import OllamaClient, OllamaClientError
+from src.llm.knowledge_prompts import knowledge_base_system_hint
 from src.llm.prompts import action_card_system_hint, build_system_block
 from src.skills.loader import build_safe_skills_prompt, get_registry
 from src.storage.session_store import Mode, SessionMeta, SessionStore
@@ -268,6 +269,16 @@ class ConversationService:
         )
         return self.open_session(m.id)
 
+    def create_knowledge_session(
+        self, kb_preset: str | None = None, title: str | None = None
+    ) -> dict:
+        m = self._store.create_knowledge_session(
+            kb_preset=kb_preset or "general",
+            title=title,
+            react_max_steps=self._react_default,
+        )
+        return self.open_session(m.id)
+
     def open_session(self, session_id: str) -> dict:
         self._stop_persona()
         meta, messages = self._store.load(session_id)
@@ -282,6 +293,11 @@ class ConversationService:
         self.ensure_session()
         assert self._meta is not None and self._active_id is not None
         return {"meta": self._meta.model_dump(), "messages": list(self._messages)}
+
+    def _kb_system_extra(self) -> str | None:
+        if self._meta is None or self._meta.session_variant != "knowledge":
+            return None
+        return knowledge_base_system_hint(self._meta.kb_preset)
 
     def update_session(
         self,
@@ -301,6 +317,8 @@ class ConversationService:
                 raise ValueError("团队会话不能使用 ReAct 模式。")
             if self._meta.session_variant == "team" and mode == "persona":
                 raise ValueError("团队会话不能使用拟人模式。")
+            if self._meta.session_variant == "knowledge" and mode == "persona":
+                raise ValueError("知识库会话不能使用拟人模式。")
             mode_t = mode  # type: ignore[assignment]
         steps: int | None = None
         if react_max_steps is not None:
@@ -363,6 +381,9 @@ class ConversationService:
         extras = [action_card_system_hint()]
         if skills_prompt:
             extras.insert(0, skills_prompt)
+        kb = self._kb_system_extra()
+        if kb:
+            extras.append(kb)
         system_block = build_system_block(extra_system="\n\n".join(extras))
         if memory_extra:
             system_block = system_block + "\n\n" + memory_extra
@@ -443,6 +464,7 @@ class ConversationService:
                     workspace=str(root),
                     max_steps=self._meta.react_max_steps,
                     memory_bootstrap=memory_extra or None,
+                    extra_system=self._kb_system_extra(),
                 )
                 if ok:
                     self._parse_action_card_on_last_assistant(self._messages)
@@ -637,6 +659,9 @@ class ConversationService:
             extras = [action_card_system_hint()]
             if skills_prompt:
                 extras.insert(0, skills_prompt)
+            kb = self._kb_system_extra()
+            if kb:
+                extras.append(kb)
             system_block = build_system_block(extra_system="\n\n".join(extras))
             if memory_extra:
                 system_block = system_block + "\n\n" + memory_extra
@@ -680,6 +705,7 @@ class ConversationService:
             workspace=str(root),
             max_steps=self._meta.react_max_steps,
             memory_bootstrap=memory_extra or None,
+            extra_system=self._kb_system_extra(),
         )
         if ok:
             self._parse_action_card_on_last_assistant(self._messages)

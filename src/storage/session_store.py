@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field, model_validator
 from src.agent.action_card import sanitize_card_from_storage
 
 Mode = Literal["chat", "react", "persona"]
-SessionVariant = Literal["standard", "team"]
+SessionVariant = Literal["standard", "team", "knowledge"]
+KbPreset = Literal["general", "ingest", "summarize", "qa"]
 
 
 def _utc_now_iso() -> str:
@@ -30,6 +31,7 @@ class SessionMeta(BaseModel):
     updated_at: str = ""
     session_variant: SessionVariant = "standard"
     team_size: int | None = Field(default=None, ge=2, le=4)
+    kb_preset: KbPreset | None = None
 
     def touch(self) -> None:
         self.updated_at = _utc_now_iso()
@@ -38,8 +40,15 @@ class SessionMeta(BaseModel):
     def _normalize_team_fields(self) -> SessionMeta:
         if self.session_variant == "standard":
             object.__setattr__(self, "team_size", None)
-        elif self.team_size is None:
-            raise ValueError("session_variant=team 时会话必须包含 team_size（2～4）")
+            object.__setattr__(self, "kb_preset", None)
+        elif self.session_variant == "knowledge":
+            object.__setattr__(self, "team_size", None)
+            if self.kb_preset is None:
+                object.__setattr__(self, "kb_preset", "general")
+        elif self.session_variant == "team":
+            object.__setattr__(self, "kb_preset", None)
+            if self.team_size is None:
+                raise ValueError("session_variant=team 时会话必须包含 team_size（2～4）")
         return self
 
 
@@ -123,6 +132,37 @@ class SessionStore:
             updated_at=_utc_now_iso(),
             session_variant="team",
             team_size=team_size,
+        )
+        self._write_meta(d, meta)
+        self._write_messages(d, [])
+        return meta
+
+    def create_knowledge_session(
+        self,
+        *,
+        kb_preset: KbPreset | str = "general",
+        title: str | None = None,
+        workspace: str | None = None,
+        mode: Mode = "chat",
+        react_max_steps: int = 8,
+    ) -> SessionMeta:
+        valid: tuple[str, ...] = ("general", "ingest", "summarize", "qa")
+        kp: KbPreset = kb_preset if kb_preset in valid else "general"  # type: ignore[assignment]
+        sid = uuid.uuid4().hex
+        d = self._session_dir(sid)
+        d.mkdir(parents=True, exist_ok=False)
+        ws = (workspace or "").strip() or str(Path.cwd())
+        t = (title or "知识库管理").strip() or "知识库管理"
+        meta = SessionMeta(
+            id=sid,
+            title=t,
+            workspace=ws,
+            mode=mode,
+            react_max_steps=react_max_steps,
+            updated_at=_utc_now_iso(),
+            session_variant="knowledge",
+            team_size=None,
+            kb_preset=kp,
         )
         self._write_meta(d, meta)
         self._write_messages(d, [])

@@ -104,6 +104,15 @@ class Api:
         except ValueError as e:
             return {"ok": False, "error": str(e), "meta": None, "messages": []}
 
+    def create_knowledge_session(
+        self, kb_preset: str | None = None, title: str | None = None
+    ) -> dict:
+        data = self._svc.create_knowledge_session(
+            kb_preset=kb_preset or "general",
+            title=title,
+        )
+        return {"ok": True, **data}
+
     def open_session(self, session_id: str) -> dict:
         return self._svc.open_session(session_id)
 
