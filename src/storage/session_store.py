@@ -16,6 +16,7 @@ from src.agent.action_card import sanitize_card_from_storage
 Mode = Literal["chat", "react", "persona"]
 SessionVariant = Literal["standard", "team", "knowledge"]
 KbPreset = Literal["general", "ingest", "summarize", "qa"]
+AvatarMode = Literal["off", "live2d", "pixel"]
 
 
 def _utc_now_iso() -> str:
@@ -32,6 +33,8 @@ class SessionMeta(BaseModel):
     session_variant: SessionVariant = "standard"
     team_size: int | None = Field(default=None, ge=2, le=4)
     kb_preset: KbPreset | None = None
+    avatar_mode: AvatarMode = "off"
+    avatar_ref: str = Field(default="", max_length=512)
 
     def touch(self) -> None:
         self.updated_at = _utc_now_iso()
@@ -50,6 +53,15 @@ class SessionMeta(BaseModel):
             if self.team_size is None:
                 raise ValueError("session_variant=team 时会话必须包含 team_size（2～4）")
         return self
+
+
+def _normalize_avatar_ref(ref: str) -> str:
+    s = (ref or "").strip()[:512]
+    if ".." in s or "\x00" in s:
+        raise ValueError("avatar_ref 无效")
+    if s and (s[0] in "/\\" or (len(s) > 1 and s[1] == ":")):
+        raise ValueError("avatar_ref 不能使用绝对路径")
+    return s
 
 
 class SessionStore:
@@ -327,6 +339,8 @@ class SessionStore:
         workspace: str | None = None,
         mode: Mode | None = None,
         react_max_steps: int | None = None,
+        avatar_mode: AvatarMode | None = None,
+        avatar_ref: str | None = None,
     ) -> SessionMeta:
         d = self._resolved_session_dir(session_id)
         meta_path = d / "meta.json"
@@ -345,6 +359,12 @@ class SessionStore:
             data["mode"] = mode
         if react_max_steps is not None:
             data["react_max_steps"] = react_max_steps
+        if avatar_mode is not None:
+            if avatar_mode not in ("off", "live2d", "pixel"):
+                raise ValueError("avatar_mode 须为 off、live2d 或 pixel")
+            data["avatar_mode"] = avatar_mode
+        if avatar_ref is not None:
+            data["avatar_ref"] = _normalize_avatar_ref(avatar_ref)
         meta = SessionMeta.model_validate(data)
         meta.touch()
         self._write_meta(d, meta)

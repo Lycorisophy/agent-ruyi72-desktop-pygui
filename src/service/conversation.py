@@ -16,6 +16,7 @@ from src.agent.action_card import (
     utc_now_iso,
 )
 from src.agent.memory_tools import build_memory_bootstrap_block
+from src.agent.chat_stream_runtime import SafeChatStreamRuntime
 from src.agent.persona_runtime import CHECKPOINT_NAME, PersonaRuntime
 from src.agent.react import run_react
 from src.agent.react_lc import run_scheduler_safe_agent
@@ -30,7 +31,7 @@ from src.llm.prompts import (
     build_system_block,
 )
 from src.skills.loader import build_safe_skills_prompt, get_registry
-from src.storage.session_store import Mode, SessionMeta, SessionStore
+from src.storage.session_store import AvatarMode, Mode, SessionMeta, SessionStore
 
 
 def resolve_sessions_root(cfg: RuyiConfig) -> Path:
@@ -51,7 +52,11 @@ class ConversationService:
         self._meta: SessionMeta | None = None
         self._memory_bootstrap_pending = False
         self._persona_emit: Any = None
+        self._react_stream_emit: Any = None
         self._persona_rt: PersonaRuntime | None = None
+        self._chat_rt: SafeChatStreamRuntime | None = None
+        self._react_cancel = threading.Event()
+        self._react_thread: threading.Thread | None = None
         self._llm_busy_depth = 0
         self._llm_busy_lock = threading.Lock()
 
@@ -73,11 +78,92 @@ class ConversationService:
         pr = self._persona_rt
         if pr is not None and pr.is_streaming():
             return False
+        cr = self._chat_rt
+        if cr is not None and cr.is_streaming():
+            return False
+        rt = self._react_thread
+        if rt is not None and rt.is_alive():
+            return False
         return True
 
     def set_persona_emit(self, fn: Any) -> None:
         """由 app.Api 注入：把拟人事件推到前端（如 pywebview evaluate_js）。"""
         self._persona_emit = fn
+
+    def set_react_stream_emit(self, fn: Any) -> None:
+        """由 app.Api 注入：ReAct 执行过程中推送步骤摘要（react.start / progress / done）。"""
+        self._react_stream_emit = fn
+
+    def _stop_chat_stream(self) -> None:
+        if self._chat_rt:
+            self._chat_rt.shutdown()
+            self._chat_rt = None
+
+    def _stop_react_worker(self) -> None:
+        self._react_cancel.set()
+        t = self._react_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=2.0)
+        self._react_thread = None
+        self._react_cancel.clear()
+
+    def _ensure_chat_stream(self) -> SafeChatStreamRuntime:
+        if self._chat_rt is None:
+
+            def emit(evt: dict) -> None:
+                if self._persona_emit:
+                    self._persona_emit(evt)
+
+            self._chat_rt = SafeChatStreamRuntime(self, emit=emit)
+        return self._chat_rt
+
+    def _sync_chat_stream_runtime(self) -> None:
+        self._stop_chat_stream()
+        if (
+            self._meta is not None
+            and self._meta.mode == "chat"
+            and self._meta.session_variant == "standard"
+        ):
+            self._ensure_chat_stream().start()
+
+    def build_safe_chat_call_messages(
+        self, user_text: str, *, memory_extra: str = ""
+    ) -> list[dict[str, str]]:
+        skills_prompt = build_safe_skills_prompt()
+        extras = [action_card_system_hint()]
+        if skills_prompt:
+            extras.insert(0, skills_prompt)
+        kb = self._kb_system_extra()
+        if kb:
+            extras.append(kb)
+        system_block = build_system_block(extra_system="\n\n".join(extras))
+        if memory_extra:
+            system_block = system_block + "\n\n" + memory_extra
+        call_messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_block}
+        ]
+        call_messages.extend(self.messages_for_llm())
+        call_messages.append({"role": "user", "content": user_text})
+        return call_messages
+
+    def supersede_pending_cards_and_append_assistant(
+        self, content: str, *, card: dict[str, Any]
+    ) -> None:
+        assert self._active_id is not None
+        supersede_pending_cards(self._messages)
+        self._messages.append(
+            {"role": "assistant", "content": content, "card": card}
+        )
+        self._store.save_messages(self._active_id, self._messages)
+        self._meta, self._messages = self._store.load(self._active_id)
+
+    def interrupt_turn(self) -> None:
+        """打断拟人 / 安全模式流式回复或 ReAct 智能体循环。"""
+        if self._persona_rt:
+            self._persona_rt.interrupt()
+        if self._chat_rt:
+            self._chat_rt.interrupt()
+        self._react_cancel.set()
 
     @property
     def store(self) -> SessionStore:
@@ -327,12 +413,15 @@ class ConversationService:
 
     def open_session(self, session_id: str) -> dict:
         self._stop_persona()
+        self._stop_chat_stream()
+        self._stop_react_worker()
         meta, messages = self._store.load(session_id)
         self._active_id = session_id
         self._meta = meta
         self._messages = messages
         self._memory_bootstrap_pending = True
         self._sync_persona_runtime()
+        self._sync_chat_stream_runtime()
         return {"meta": self._meta.model_dump(), "messages": list(self._messages)}
 
     def get_active(self) -> dict:
@@ -525,6 +614,8 @@ class ConversationService:
         workspace: str | None = None,
         mode: str | None = None,
         react_max_steps: int | float | None = None,
+        avatar_mode: str | None = None,
+        avatar_ref: str | None = None,
     ) -> dict:
         self.ensure_session()
         assert self._active_id is not None
@@ -542,15 +633,26 @@ class ConversationService:
         steps: int | None = None
         if react_max_steps is not None:
             steps = int(react_max_steps)
+        am: AvatarMode | None = None
+        if avatar_mode is not None:
+            if avatar_mode not in ("off", "live2d", "pixel"):
+                raise ValueError("avatar_mode 须为 off、live2d 或 pixel")
+            am = avatar_mode  # type: ignore[assignment]
+        ar: str | None = None
+        if avatar_ref is not None:
+            ar = str(avatar_ref)
         meta = self._store.update_meta(
             self._active_id,
             title=title,
             workspace=workspace,
             mode=mode_t,
             react_max_steps=steps,
+            avatar_mode=am,
+            avatar_ref=ar,
         )
         self._meta = meta
         self._sync_persona_runtime()
+        self._sync_chat_stream_runtime()
         return {"meta": meta.model_dump()}
 
     def rename_session(self, session_id: str, title: str) -> dict:
@@ -566,6 +668,7 @@ class ConversationService:
         if self._active_id == session_id:
             self._meta = meta
             self._sync_persona_runtime()
+            self._sync_chat_stream_runtime()
         return {"ok": True, "meta": meta.model_dump()}
 
     def delete_session(self, session_id: str) -> dict:
@@ -573,6 +676,8 @@ class ConversationService:
         assert self._active_id is not None
         if session_id == self._active_id:
             self._stop_persona()
+            self._stop_chat_stream()
+            self._stop_react_worker()
         try:
             self._store.delete_session(session_id)
         except FileNotFoundError:
@@ -694,6 +799,7 @@ class ConversationService:
                         memory_bootstrap=memory_extra or None,
                         extra_system=self._kb_system_extra(),
                         scheduler_context=sched_ctx,
+                        stream_emit=self._react_stream_emit,
                     )
                 if ok:
                     self._parse_action_card_on_last_assistant(self._messages)
@@ -814,17 +920,22 @@ class ConversationService:
             messages[i] = {"role": "assistant", "content": content, "card": card}
             return
 
-    def send_message(self, text: str) -> tuple[bool, str, bool]:
+    def send_message(self, text: str) -> dict[str, Any]:
         """
-        返回 (ok, message, append_error)。
-        append_error=True 时前端在刷新后额外展示一条错误气泡（仅对话模式 LLM 失败等未写入历史的情况）。
+        返回 dict：ok, message, append_error, async（是否仅后台流式完成）, sync（同步错误时 True）。
         """
         self.ensure_session()
         assert self._active_id is not None and self._meta is not None
 
         text = (text or "").strip()
         if not text:
-            return False, "请输入内容。", True
+            return {
+                "ok": False,
+                "message": "请输入内容。",
+                "append_error": True,
+                "sync": True,
+                "async": False,
+            }
 
         sv = getattr(self._meta, "session_variant", None)
         log_send_message_context(
@@ -837,21 +948,50 @@ class ConversationService:
         if self._meta.mode == "persona" and self._meta.session_variant == "standard":
             r = self.persona_send(text)
             if r.get("sync"):
-                return r["ok"], r.get("message", ""), r.get("append_error", False)
-            return bool(r.get("ok")), "", False
+                return {
+                    "ok": r["ok"],
+                    "message": r.get("message", ""),
+                    "append_error": r.get("append_error", False),
+                    "sync": True,
+                    "async": False,
+                }
+            return {
+                "ok": bool(r.get("ok")),
+                "message": "",
+                "append_error": False,
+                "async": True,
+            }
 
         # 特殊命令：加载技能文档（Ask 模式下的渐进披露）
         if text.startswith("加载技能:"):
             ok, msg, ae = self._try_skill_load(text)
-            return ok, msg, ae
+            return {
+                "ok": ok,
+                "message": msg,
+                "append_error": ae,
+                "sync": True,
+                "async": False,
+            }
 
         ws = (self._meta.workspace or "").strip()
         if not ws:
-            return False, "请先在侧栏或上方设置「工作区」为有效文件夹路径。", True
+            return {
+                "ok": False,
+                "message": "请先在侧栏或上方设置「工作区」为有效文件夹路径。",
+                "append_error": True,
+                "sync": True,
+                "async": False,
+            }
 
         root = Path(ws).expanduser().resolve()
         if not root.is_dir():
-            return False, f"工作区不存在或不是目录: {root}", True
+            return {
+                "ok": False,
+                "message": f"工作区不存在或不是目录: {root}",
+                "append_error": True,
+                "sync": True,
+                "async": False,
+            }
 
         memory_extra = ""
         if self._memory_bootstrap_pending:
@@ -862,14 +1002,24 @@ class ConversationService:
             ts = self._meta.team_size
             m_count = len(self._cfg.team.models)
             if ts is None or not (2 <= ts <= 4):
-                return False, "团队会话元数据无效（缺少 team_size）。", True
+                return {
+                    "ok": False,
+                    "message": "团队会话元数据无效（缺少 team_size）。",
+                    "append_error": True,
+                    "sync": True,
+                    "async": False,
+                }
             if ts > m_count:
-                return (
-                    False,
-                    f"当前配置的 team.models 仅 {m_count} 条，小于本会话的 team_size={ts}。"
-                    "请补充配置或改用标准会话。",
-                    True,
-                )
+                return {
+                    "ok": False,
+                    "message": (
+                        f"当前配置的 team.models 仅 {m_count} 条，小于本会话的 team_size={ts}。"
+                        "请补充配置或改用标准会话。"
+                    ),
+                    "append_error": True,
+                    "sync": True,
+                    "async": False,
+                }
             self._messages.append({"role": "user", "content": text})
             try:
                 with self.llm_busy():
@@ -882,78 +1032,87 @@ class ConversationService:
                     )
             except ValueError as e:
                 self._messages.pop()
-                return False, str(e), True
+                return {
+                    "ok": False,
+                    "message": str(e),
+                    "append_error": True,
+                    "sync": True,
+                    "async": False,
+                }
             except OllamaClientError as e:
                 self._messages.pop()
-                return False, str(e), True
+                return {
+                    "ok": False,
+                    "message": str(e),
+                    "append_error": True,
+                    "sync": True,
+                    "async": False,
+                }
             self._messages.append({"role": "assistant", "content": reply})
             self._store.save_messages(self._active_id, self._messages)
             self._meta, _ = self._store.load(self._active_id)
-            return True, reply, False
+            return {
+                "ok": True,
+                "message": reply,
+                "append_error": False,
+                "async": False,
+            }
 
         if self._meta.mode == "chat":
-            # 对话模式：在每次调用前临时注入固定 system 提示 + safe 技能目录 + action_card 说明，不写入历史。
-            skills_prompt = build_safe_skills_prompt()
-            extras = [action_card_system_hint()]
-            if skills_prompt:
-                extras.insert(0, skills_prompt)
-            kb = self._kb_system_extra()
-            if kb:
-                extras.append(kb)
-            system_block = build_system_block(extra_system="\n\n".join(extras))
-            if memory_extra:
-                system_block = system_block + "\n\n" + memory_extra
+            self._ensure_chat_stream().start()
+            self._ensure_chat_stream().enqueue_user_text(text, memory_extra=memory_extra)
+            return {
+                "ok": True,
+                "message": "",
+                "append_error": False,
+                "async": True,
+            }
 
-            call_messages: list[dict[str, str]] = [
-                {"role": "system", "content": system_block}
-            ]
-            call_messages.extend(self.messages_for_llm())
-            call_messages.append({"role": "user", "content": text})
+        # ReAct（普通）：后台线程执行，支持打断
+        self._messages.append({"role": "user", "content": text})
+        self._store.save_messages(self._active_id, self._messages)
+        sid = self._active_id
+        sched_ctx = (self, sid) if sid else None
+        llm_cfg = self._llm
+        root_s = str(root)
+        r_steps = self._meta.react_max_steps
+        mem_b = memory_extra
+        kb_ex = self._kb_system_extra()
+        r_emit = self._react_stream_emit
+        self._stop_react_worker()
 
+        def _react_worker() -> None:
             try:
                 with self.llm_busy():
-                    reply = OllamaClient(self._llm).chat(
-                        call_messages,
-                        caller="ConversationService.send_message.chat",
+                    ok, _out = run_react(
+                        llm_cfg,
+                        self._messages,
+                        workspace=root_s,
+                        max_steps=r_steps,
+                        memory_bootstrap=mem_b,
+                        extra_system=kb_ex,
+                        scheduler_context=sched_ctx,
+                        stream_emit=r_emit,
+                        cancel_check=lambda: self._react_cancel.is_set(),
                     )
-            except OllamaClientError as e:
-                return False, str(e), True
+                if ok:
+                    self._parse_action_card_on_last_assistant(self._messages)
+                self._store.save_messages(self._active_id, self._messages)
+                self._meta, _ = self._store.load(self._active_id)
+            except Exception:
+                pass
+            finally:
+                if self._persona_emit:
+                    self._persona_emit({"type": "turn.finished", "turn_id": -1})
+                self._react_thread = None
 
-            visible, card = split_reply_action_card(reply)
-            content = visible.strip() if visible else ""
-            if card is not None:
-                if not content:
-                    content = str(card.get("title") or "").strip() or "请确认下列设置。"
-                supersede_pending_cards(self._messages)
-                assistant_msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": content,
-                    "card": card,
-                }
-            else:
-                assistant_msg = {"role": "assistant", "content": content or reply}
-
-            self._messages.append({"role": "user", "content": text})
-            self._messages.append(assistant_msg)
-            self._store.save_messages(self._active_id, self._messages)
-            self._meta, self._messages = self._store.load(self._active_id)
-            return True, reply, False
-
-        # ReAct 模式：历史中先追加用户消息，后续由 run_react 修改 messages 列表。
-        self._messages.append({"role": "user", "content": text})
-        sched_ctx = (self, self._active_id) if self._active_id else None
-        with self.llm_busy():
-            ok, out = run_react(
-                self._llm,
-                self._messages,
-                workspace=str(root),
-                max_steps=self._meta.react_max_steps,
-                memory_bootstrap=memory_extra or None,
-                extra_system=self._kb_system_extra(),
-                scheduler_context=sched_ctx,
-            )
-        if ok:
-            self._parse_action_card_on_last_assistant(self._messages)
-        self._store.save_messages(self._active_id, self._messages)
-        self._meta, _ = self._store.load(self._active_id)
-        return ok, out, False
+        self._react_thread = threading.Thread(
+            target=_react_worker, name="react-worker", daemon=True
+        )
+        self._react_thread.start()
+        return {
+            "ok": True,
+            "message": "",
+            "append_error": False,
+            "async": True,
+        }

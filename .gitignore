@@ -14,3 +14,14 @@ build/
 .DS_Store
 Thumbs.db
 deerflow/
+
+# Live2D Cubism Core（本地放置，勿提交；见 web/live2d/Core/README.txt）
+web/live2d/Core/live2dcubismcore*.js
+web/live2d/Core/live2dcubismcore*.js.map
+
+# Live2D 示例模型（体积大；仅保留 bundled/README.txt）
+web/live2d/bundled/**
+!web/live2d/bundled/README.txt
+
+# 可选：离线放置 Pixi 与 pixi-live2d-display（见 docs/session-avatar-design.md）
+web/live2d/vendor/*.js

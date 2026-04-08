@@ -63,6 +63,23 @@ class Api:
 
         self._svc.set_persona_emit(emit)
 
+        def emit_react(evt: dict) -> None:
+            w = self._window
+            if w is None:
+                return
+            try:
+                inner = json.dumps(evt, ensure_ascii=False)
+                js = (
+                    "window.__ruyiReactEvent && window.__ruyiReactEvent("
+                    + json.dumps(inner)
+                    + ")"
+                )
+                w.evaluate_js(js)  # type: ignore[union-attr]
+            except Exception:
+                pass
+
+        self._svc.set_react_stream_emit(emit_react)
+
     def persona_send(self, text: str) -> dict:
         return self._svc.persona_send(text or "")
 
@@ -76,8 +93,11 @@ class Api:
         return self._svc.persona_pause(reason or "")
 
     def send_message(self, text: str) -> dict:
-        ok, message, append_error = self._svc.send_message(text)
-        return {"ok": ok, "message": message, "append_error": append_error}
+        return self._svc.send_message(text or "")
+
+    def interrupt_turn(self) -> dict:
+        self._svc.interrupt_turn()
+        return {"ok": True}
 
     def get_settings_snapshot(self) -> dict:
         llm = self._cfg.llm
@@ -194,6 +214,28 @@ class Api:
             workspace=p.get("workspace"),
             mode=p.get("mode"),
             react_max_steps=p.get("react_max_steps"),
+            avatar_mode=p.get("avatar_mode"),
+            avatar_ref=p.get("avatar_ref"),
+        )
+
+    def get_session_avatar_meta(self) -> dict:
+        """当前活动会话的形象字段（与 meta 子集一致）。"""
+        g = self._svc.get_active()
+        m = g.get("meta") or {}
+        return {
+            "session_id": m.get("id"),
+            "avatar_mode": m.get("avatar_mode") or "off",
+            "avatar_ref": m.get("avatar_ref") or "",
+        }
+
+    def set_session_avatar(self, payload: dict | None = None) -> dict:
+        """仅更新当前会话的 avatar_mode / avatar_ref。"""
+        p = payload or {}
+        return self.update_session(
+            {
+                "avatar_mode": p.get("avatar_mode"),
+                "avatar_ref": p.get("avatar_ref"),
+            }
         )
 
     def rename_session(self, session_id: str, title: str) -> dict:

@@ -115,6 +115,10 @@
             <input type="checkbox" id="llm-api-key-visible" />
             <span>显示 API Key</span>
           </label>
+          <label class="field-row">
+            <input type="checkbox" id="llm-client-log-enabled" />
+            <span>在浏览器控制台记录 LLM 相关 API 耗时与结果（F12）</span>
+          </label>
           <label>
             <span>温度</span>
             <input type="number" id="llm-temperature" class="field-input narrow" min="0" max="2" step="0.1" />
@@ -236,11 +240,11 @@
       <p id="ws-apply-status" class="ws-apply-status" aria-live="polite"></p>
       <div class="mode-row">
         <span class="mode-label">模式</span>
-        <label class="radio"><input type="radio" name="mode" value="chat" checked /> 对话（仅回答）</label>
-        <label class="radio"><input type="radio" name="mode" value="react" /> ReAct（思考并执行）</label>
-        <label class="radio"><input type="radio" name="mode" value="persona" /> 拟人（流式·可打断）</label>
+        <label class="radio"><input type="radio" name="mode" value="chat" checked /> 安全（仅安全技能）</label>
+        <label class="radio"><input type="radio" name="mode" value="react" /> 普通（智能体）</label>
+        <label class="radio"><input type="radio" name="mode" value="persona" /> 拟人（主动对话）</label>
         <label class="field react-steps">
-          <span>ReAct 最大步数</span>
+          <span>智能体步数上限</span>
           <input type="number" id="react-steps" min="1" max="200" value="8" class="field-input narrow" />
         </label>
       </div>
@@ -327,6 +331,31 @@
     <div class="content-body">
       <div class="content-main-column">
         <main class="main">
+          <div class="avatar-strip" id="avatar-strip" aria-label="会话形象">
+            <div class="avatar-strip-stage-wrap">
+              <div id="avatar-strip-stage" class="avatar-strip-stage"></div>
+              <p id="avatar-strip-status" class="avatar-strip-status hidden" role="status"></p>
+            </div>
+            <div class="avatar-strip-controls">
+              <label class="avatar-strip-label">
+                <span class="avatar-strip-label-text">形象</span>
+                <select id="session-avatar-mode" class="field-input avatar-select" aria-label="会话形象模式">
+                  <option value="off">关闭</option>
+                  <option value="pixel">像素（内置）</option>
+                  <option value="live2d">Live2D（实验）</option>
+                </select>
+              </label>
+              <label id="session-avatar-pixel-kind-wrap" class="avatar-strip-label hidden" aria-hidden="true">
+                <span class="avatar-strip-label-text">角色</span>
+                <select id="session-avatar-pixel-kind" class="field-input avatar-select" aria-label="像素角色">
+                  <option value="cat">小猫</option>
+                  <option value="dog">小狗</option>
+                  <option value="rabbit">兔子</option>
+                  <option value="fox">狐狸</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div class="main-split-toolbar">
             <button type="button" id="btn-toggle-split" class="btn btn-small" aria-pressed="false" title="并排打开预览栏">分屏预览</button>
             <span id="split-toolbar-hint" class="split-toolbar-hint">关闭时仅显示对话；开启后右侧可浏览工作区目录（仅元信息）或从消息「分屏打开」查看正文。</span>
@@ -373,7 +402,7 @@
                 placeholder="输入消息，Enter 发送，Shift+Enter 换行"
                 autocomplete="off"
               ></textarea>
-              <button type="button" id="btn-persona-interrupt" class="send btn-interrupt hidden" title="中断当前拟人回复">打断</button>
+              <button type="button" id="btn-persona-interrupt" class="send btn-interrupt hidden" title="打断当前生成（安全 / 普通 / 拟人）">打断</button>
               <button type="submit" id="send" class="send">发送</button>
             </form>
           </div>
@@ -483,12 +512,21 @@
     </div>
   </div>
 
+  <script src="avatar.js"></script>
   <script>
     window.__ruyiPersonaEvent = function (jsonStr) {
       try {
         var evt = JSON.parse(jsonStr);
         if (typeof window.__ruyiPersonaDispatch === "function") {
           window.__ruyiPersonaDispatch(evt);
+        }
+      } catch (e) { /* ignore */ }
+    };
+    window.__ruyiReactEvent = function (jsonStr) {
+      try {
+        var evt = JSON.parse(jsonStr);
+        if (typeof window.__ruyiReactDispatch === "function") {
+          window.__ruyiReactDispatch(evt);
         }
       } catch (e) { /* ignore */ }
     };

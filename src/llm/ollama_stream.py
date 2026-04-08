@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from typing import Any
 
 import httpx
 
 from src.config import LLMConfig
-from src.debug_log import log_llm_request, log_llm_response, log_llm_stream_done
+from src.debug_log import (
+    log_llm_request,
+    log_llm_response,
+    log_llm_stream_done,
+    log_llm_stream_summary,
+)
 from src.llm.ollama import (
     OllamaClientError,
     effective_trust_env,
@@ -47,9 +53,18 @@ def stream_chat(
     trust = effective_trust_env(cfg)
     content_acc: list[str] = []
     thinking_acc: list[str] = []
+    t0 = time.perf_counter()
 
     if is_openai_cloud(cfg):
         if not key:
+            log_llm_stream_summary(
+                caller,
+                llm_cfg=cfg,
+                url=openai_compatible_chat_completions_url(cfg),
+                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+                ok=False,
+                error="缺少 API Key",
+            )
             raise OllamaClientError(
                 "当前提供商需要 API Key。请在设置中填写 llm.api_key，或设置对应环境变量。"
             )
@@ -111,12 +126,38 @@ def stream_chat(
                     _consume_native_stream(r, on_delta, cancel_check, content_acc, thinking_acc)
     except httpx.ConnectError as e:
         log_llm_response(caller, error=f"ConnectError: {e!s}")
+        log_llm_stream_summary(
+            caller,
+            llm_cfg=cfg,
+            url=url,
+            elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+            ok=False,
+            error=f"ConnectError: {e!s}",
+        )
         raise OllamaClientError(
             "无法连接到 Ollama。请确认服务已启动且 base_url 正确。" f" ({e!s})"
         ) from e
     except httpx.TimeoutException as e:
         log_llm_response(caller, error=f"Timeout: {e!s}")
+        log_llm_stream_summary(
+            caller,
+            llm_cfg=cfg,
+            url=url,
+            elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+            ok=False,
+            error=f"Timeout: {e!s}",
+        )
         raise OllamaClientError(f"流式请求超时。 ({e!s})") from e
+    except OllamaClientError as e:
+        log_llm_stream_summary(
+            caller,
+            llm_cfg=cfg,
+            url=url,
+            elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+            ok=False,
+            error=str(e)[:500],
+        )
+        raise
 
     content_s = "".join(content_acc)
     thinking_s = "".join(thinking_acc)
@@ -129,6 +170,15 @@ def stream_chat(
         thinking_len=len(thinking_s),
         content_preview=content_s,
         thinking_preview=thinking_s,
+    )
+    log_llm_stream_summary(
+        caller,
+        llm_cfg=cfg,
+        url=url,
+        elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+        ok=True,
+        content_len=len(content_s),
+        thinking_len=len(thinking_s),
     )
     return content_s, thinking_s
 

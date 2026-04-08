@@ -28,7 +28,14 @@ pip install -r requirements.txt
    - 当前工作目录下的 `config/ruyi72.yaml`；
    - 用户目录 `%USERPROFILE%\.ruyi72\ruyi72.yaml`。
 
-2. 按需修改 `llm.provider`、`llm.base_url`、`llm.model`、`temperature`、`max_tokens` 以及窗口 `app.title`、`width`、`height`。`llm.provider` 支持：`ollama`（本地）、`minimax`、`deepseek`、`qwen`（通义千问，DashScope OpenAI 兼容）。后三者走 OpenAI 兼容 `/v1/chat/completions`，通常需要 `llm.api_key`。调试时可设 `app.debug: true` 或环境变量 `RUYI72_DEBUG=1`，在运行 `python app.py` 的控制台输出 LLM 请求/响应摘要（可能含对话片段，勿在公共环境开启）。
+2. 按需修改 `llm.provider`、`llm.base_url`、`llm.model`、`temperature`、`max_tokens` 以及窗口 `app.title`、`width`、`height`。`llm.provider` 支持：`ollama`（本地）、`minimax`、`deepseek`、`qwen`（通义千问，DashScope OpenAI 兼容）。后三者走 OpenAI 兼容 `/v1/chat/completions`，通常需要 `llm.api_key`。
+
+   **LLM 日志（三档）**：
+
+   - **终端 INFO 单行摘要**（推荐日常排障）：配置 `llm.log_summary: true` 或环境变量 `RUYI72_LLM_LOG=1`。每条直连/流式调用会打耗时、模型、URL、HTTP 状态等**不含全文 prompt**；ReAct（LangChain）会在每次子 LLM 调用打摘要。
+   - **ReAct 工具调用轨迹**（可选）：环境变量 `RUYI72_REACT_TRACE=1` 时，终端 INFO 输出每次工具调用的名称与**截断后的入参/出参**（便于排查「卡在哪一步」；与 `llm.log_summary` 独立）。
+   - **终端 DEBUG 全量摘要**：`app.debug: true` 或 `RUYI72_DEBUG=1`，输出脱敏后的请求/响应片段（可能含对话内容，勿在公共环境开启）。
+   - **浏览器控制台**：在界面「模型与 API 设置」勾选「在浏览器控制台记录 LLM 相关 API 耗时与结果」，打开 F12 可见 `send_message` / `persona_send` / `extract_memory` 等调用的耗时与返回摘要。
 
 3. **本地覆盖（可选）**：在界面「模型与 API 设置」中保存的配置会写入 `%USERPROFILE%\.ruyi72\ruyi72.local.yaml`，并在启动时**合并覆盖**主配置文件中同名的 `llm` 字段（便于在不改仓库内 YAML 的情况下切换模型）。
 
@@ -51,7 +58,7 @@ pip install -r requirements.txt
 ## 功能概览
 
 - **标准对话（Chat）**：多轮问答，不自动执行工具；可选 **交互确认卡片**（`action_card`），用户确认后可触发后续回复。
-- **ReAct**：**LangChain** `create_agent`（底层 **LangGraph**），工具限于工作区内的 `read_file` / `list_dir` / `run_shell`，并可加载技能、浏览/检索记忆；步数受「最大步数」限制。
+- **ReAct**：**LangChain** `create_agent`（底层 **LangGraph**），工具限于工作区内的 `read_file` / `list_dir` / `write_file` / `run_shell` 等，并可加载技能、浏览/检索记忆；步数受「最大步数」限制。**界面上的逐字流式输出仅拟人模式具备**；Chat / ReAct / 团队为「整轮完成后刷新消息」，但 ReAct 会在等待气泡中显示已等待秒数，并在主窗口通过 `evaluate_js` 推送**步骤摘要**（工具调用、模型轮次等），避免长时间无反馈。
 - **拟人模式**：流式输出、可打断/暂停；与团队、知识库会话互斥（见界面与会话类型）。
 - **团队会话**：多模型链式委派，槽位与约束见 [docs/agent-team-mode.md](docs/agent-team-mode.md)。
 - **知识库会话**：将工作区视为知识库根目录，按预设侧重（收录、摘要、问答等）注入系统提示。
@@ -66,7 +73,7 @@ pip install -r requirements.txt
 
 - 左侧可**新建 / 切换会话**；每个会话可设置**工作区**（本地文件夹路径），对话与 ReAct 均仅允许访问该目录内的文件（工具会校验路径）。
 - **对话**：仅多轮问答，不执行工具。
-- **ReAct**：使用 **LangChain** `create_agent`（底层 **LangGraph**）；`provider=ollama` 时为 **ChatOllama**，云端提供商时为 **OpenAI 兼容**客户端，均与当前 `llm` 配置一致；工具为 `read_file` / `list_dir` / `run_shell`（工作区内）。递归深度与「最大步数」相关，达到上限会停止。
+- **ReAct**：使用 **LangChain** `create_agent`（底层 **LangGraph**）；`provider=ollama` 时为 **ChatOllama**，云端提供商时为 **OpenAI 兼容**客户端，均与当前 `llm` 配置一致；工具为 `read_file` / `list_dir` / `write_file` / `run_shell`（工作区内）。递归深度与「最大步数」相关，达到上限会停止。
 
 ## 文档
 

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
+from collections.abc import Callable
 from typing import Any
 
 from langchain.agents import create_agent
@@ -11,11 +14,33 @@ from langchain_core.tools import tool
 from langgraph.errors import GraphRecursionError
 
 from src.agent.memory_tools import browse_memory_formatted, search_memory_keyword
-from src.agent.tools import tool_list_dir, tool_read_file, tool_run_shell
+from src.agent.tools import (
+    tool_list_dir,
+    tool_read_file,
+    tool_run_shell,
+    tool_write_file,
+)
 from src.config import LLMConfig
+from src.debug_log import (
+    LangChainLlmSummaryHandler,
+    ReactTraceToolCallbackHandler,
+    is_llm_summary_enabled,
+    is_react_trace_enabled,
+)
 from src.llm.chat_model import chat_model_from_config
 from src.llm.prompts import SCHEDULED_TASK_REPLY_RULES, action_card_system_hint, build_system_block
 from src.skills.loader import build_react_skills_block, get_registry
+
+_LOG = logging.getLogger("ruyi72.react")
+
+
+def _lc_callbacks(llm_cfg: LLMConfig, *, label: str) -> list[Any]:
+    cbs: list[Any] = []
+    if is_llm_summary_enabled(llm_cfg):
+        cbs.append(LangChainLlmSummaryHandler(llm_cfg, label=label))
+    if is_react_trace_enabled():
+        cbs.append(ReactTraceToolCallbackHandler())
+    return cbs
 
 
 _SCHEDULER_BLOCK = """
@@ -32,7 +57,8 @@ _REACT_SYSTEM = """你是具备工具调用能力的智能体，必须在给定�
 工作区绝对路径: {workspace}
 
 你可以使用以下工具：
-- read_file / list_dir / run_shell：在工作区内读文件、列目录、执行命令。
+- read_file / list_dir / write_file / run_shell：在工作区内读文件、列目录、**写入或覆盖 UTF-8 文本**、执行命令。
+- 创建多行脚本或小项目时**优先 write_file** 写入 `.py` 等文件，再 `run_shell` 运行；勿把大量代码塞进单行命令（Windows 命令行长度约限 8191 字符，会失败）。
 - load_skill：按需加载某个技能的完整说明（来自 skills 目录的 SKILL.md）。
 - browse_memory：浏览用户跨会话长期记忆中最近若干条（事实/事件/关系），只读本地存储，与工作区无关。
 - search_memory：按关键词在记忆库中子串检索（非向量），用于查找与当前任务相关的历史记忆。
@@ -84,6 +110,11 @@ def _make_tools(
         return tool_list_dir(ws, path)
 
     @tool
+    def write_file(path: str, content: str) -> str:
+        """在工作区内创建或覆盖 UTF-8 文本文件。多行源码、小游戏等请用本工具写入 path，勿用过长单行 run_shell。"""
+        return tool_write_file(ws, path, content)
+
+    @tool
     def run_shell(command: str) -> str:
         """在工作区根目录下执行一条 shell 命令。"""
         return tool_run_shell(ws, command)
@@ -116,7 +147,15 @@ def _make_tools(
         """在记忆库 JSONL 中按关键词做子串匹配；max_per_kind 为每类最多返回条数。"""
         return search_memory_keyword(query, max_per_kind=max_per_kind)
 
-    tools: list[Any] = [read_file, list_dir, run_shell, load_skill, browse_memory, search_memory]
+    tools: list[Any] = [
+        read_file,
+        list_dir,
+        write_file,
+        run_shell,
+        load_skill,
+        browse_memory,
+        search_memory,
+    ]
     if safe_only:
         tools = [read_file, list_dir, load_skill, browse_memory, search_memory]
     elif scheduler_context is not None:
@@ -213,7 +252,7 @@ def run_scheduler_safe_agent(
     max_steps: int = 8,
 ) -> tuple[bool, str]:
     """
-    内置定时任务 ASK：仅 SAFE 工具子集（无 run_shell、无会话定时任务工具）。
+    内置定时任务安全模式：仅 SAFE 工具子集（无 run_shell、无会话定时任务工具）。
     返回 (成功, 展示文本/trace)。
     """
     if max_steps < 1:
@@ -237,10 +276,14 @@ def run_scheduler_safe_agent(
     )
     lc_in = _dicts_to_messages([{"role": "user", "content": user_prompt}])
     recursion_limit = max(12, min(200, max_steps * 3 + 6))
+    invoke_cfg: dict[str, Any] = {"recursion_limit": recursion_limit}
+    cbs = _lc_callbacks(llm_cfg, label="scheduler_safe_react")
+    if cbs:
+        invoke_cfg["callbacks"] = cbs
     try:
         result: dict[str, Any] = agent.invoke(
             {"messages": lc_in},
-            config={"recursion_limit": recursion_limit},
+            config=invoke_cfg,
         )
     except GraphRecursionError as e:
         return False, f"已达到安全模式步数/递归上限（recursion_limit={recursion_limit}）。{e!s}"
@@ -311,6 +354,61 @@ def _display_trace(msgs: list[dict[str, str]]) -> str:
     return "\n\n".join(parts)
 
 
+def _safe_stream_emit(
+    fn: Callable[[dict[str, Any]], None] | None, payload: dict[str, Any]
+) -> None:
+    if fn is None:
+        return
+    try:
+        fn(payload)
+    except Exception:
+        pass
+
+
+def _state_sig(state: dict[str, Any]) -> tuple[Any, ...]:
+    msgs = state.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return (0, "")
+    last = msgs[-1]
+    tid = getattr(last, "id", None) or ""
+    return (len(msgs), type(last).__name__, str(tid))
+
+
+def _line_from_agent_state(state: dict[str, Any]) -> str | None:
+    msgs = state.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    last = msgs[-1]
+    if isinstance(last, AIMessage):
+        tcs = getattr(last, "tool_calls", None) or []
+        if tcs:
+            names: list[str] = []
+            for tc in tcs:
+                if isinstance(tc, dict):
+                    n = tc.get("name") or ""
+                else:
+                    n = getattr(tc, "name", "") or ""
+                if n:
+                    names.append(str(n))
+            if names:
+                return "调用工具: " + ", ".join(names)
+            return "模型请求工具调用…"
+        content = getattr(last, "content", "") or ""
+        c = str(content)
+        if len(c) > 100:
+            return "模型输出（片段）: " + c[:100].replace("\n", " ") + "…"
+        return "模型已回复" if c.strip() else "模型轮次…"
+    if isinstance(last, ToolMessage):
+        name = getattr(last, "name", "") or "tool"
+        c = str(getattr(last, "content", "") or "")
+        one = c.replace("\n", " ")[:160]
+        suf = "…" if len(c) > 160 else ""
+        return f"工具 [{name}] 完成: {one}{suf}"
+    if isinstance(last, HumanMessage):
+        return "用户/工具输入（步骤推进）"
+    return f"步骤推进（共 {len(msgs)} 条消息）"
+
+
 def run_react(
     llm_cfg: LLMConfig,
     messages: list[dict[str, Any]],
@@ -320,6 +418,8 @@ def run_react(
     memory_bootstrap: str | None = None,
     extra_system: str | None = None,
     scheduler_context: tuple[Any, str] | None = None,
+    stream_emit: Callable[[dict[str, Any]], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> tuple[bool, str]:
     """
     使用 LangChain create_agent（底层为 LangGraph）执行工具循环。
@@ -352,19 +452,112 @@ def run_react(
 
     lc_in = _dicts_to_messages(messages)
     recursion_limit = max(12, min(200, max_steps * 3 + 6))
+    invoke_cfg: dict[str, Any] = {"recursion_limit": recursion_limit}
+    cbs = _lc_callbacks(llm_cfg, label="react")
+    if cbs:
+        invoke_cfg["callbacks"] = cbs
 
+    inp: dict[str, Any] = {"messages": lc_in}
+    t_wall = time.perf_counter()
+    ws_short = workspace if len(workspace) <= 120 else workspace[:117] + "…"
+    use_stream_loop = stream_emit is not None or cancel_check is not None
+    _LOG.info(
+        "[ReAct] start workspace=%s max_steps=%s recursion_limit=%s stream=%s",
+        ws_short,
+        max_steps,
+        recursion_limit,
+        use_stream_loop,
+    )
+
+    result: dict[str, Any] = {}
+    interrupted = False
     try:
-        result: dict[str, Any] = agent.invoke(
-            {"messages": lc_in},
-            config={"recursion_limit": recursion_limit},
-        )
+        if use_stream_loop:
+            _safe_stream_emit(
+                stream_emit,
+                {"type": "react.start", "recursion_limit": recursion_limit},
+            )
+            last_state: dict[str, Any] | None = None
+            last_sig: tuple[Any, ...] | None = None
+            for state in agent.stream(inp, config=invoke_cfg, stream_mode="values"):
+                if isinstance(state, dict):
+                    last_state = state
+                    sig = _state_sig(state)
+                    if sig != last_sig:
+                        last_sig = sig
+                        line = _line_from_agent_state(state)
+                        if line and stream_emit:
+                            _safe_stream_emit(
+                                stream_emit, {"type": "react.progress", "line": line}
+                            )
+                if cancel_check and cancel_check():
+                    interrupted = True
+                    break
+            result = last_state if last_state is not None else {}
+        else:
+            result = agent.invoke(inp, config=invoke_cfg)
     except GraphRecursionError as e:
+        ms = (time.perf_counter() - t_wall) * 1000.0
+        _LOG.info("[ReAct] done ok=False ms=%.0f err=recursion_limit", ms)
+        _safe_stream_emit(
+            stream_emit,
+            {
+                "type": "react.done",
+                "ok": False,
+                "elapsed_ms": round(ms),
+                "error": "recursion_limit",
+            },
+        )
         return False, f"已达到 ReAct 步数/递归上限（recursion_limit={recursion_limit}）。{e!s}"
     except Exception as e:
+        ms = (time.perf_counter() - t_wall) * 1000.0
+        _LOG.info("[ReAct] done ok=False ms=%.0f err=%s", ms, str(e)[:300])
+        _safe_stream_emit(
+            stream_emit,
+            {
+                "type": "react.done",
+                "ok": False,
+                "elapsed_ms": round(ms),
+                "error": str(e)[:500],
+            },
+        )
         return False, f"Agent 执行失败: {e!s}"
+
+    if interrupted:
+        ms_i = (time.perf_counter() - t_wall) * 1000.0
+        _LOG.info("[ReAct] done ok=False ms=%.0f err=interrupted", ms_i)
+        _safe_stream_emit(
+            stream_emit,
+            {
+                "type": "react.done",
+                "ok": False,
+                "elapsed_ms": round(ms_i),
+                "error": "interrupted",
+            },
+        )
+        raw_i = result.get("messages")
+        if isinstance(raw_i, list):
+            flat_i = _messages_to_dicts(raw_i)
+            flat_i = [m for m in flat_i if m.get("role") != "system"]
+            messages.clear()
+            messages.extend(flat_i)
+            trace_i = _display_trace(flat_i)
+            return False, trace_i or "【已中断】"
+        return False, "【已中断】"
 
     raw_msgs = result.get("messages")
     if not isinstance(raw_msgs, list):
+        ms = (time.perf_counter() - t_wall) * 1000.0
+        _LOG.info("[ReAct] done ok=False ms=%.0f err=missing_messages", ms)
+        _safe_stream_emit(
+            stream_emit,
+            {
+                "type": "react.done",
+                "ok": False,
+                "elapsed_ms": round(ms),
+                "error": "missing_messages",
+            },
+        )
         return False, "Agent 返回中缺少 messages。"
 
     flat = _messages_to_dicts(raw_msgs)
@@ -372,6 +565,13 @@ def run_react(
 
     messages.clear()
     messages.extend(flat)
+
+    ms = (time.perf_counter() - t_wall) * 1000.0
+    _LOG.info("[ReAct] done ok=True ms=%.0f", ms)
+    _safe_stream_emit(
+        stream_emit,
+        {"type": "react.done", "ok": True, "elapsed_ms": round(ms)},
+    )
 
     trace = _display_trace(flat)
     return True, trace or "(已完成，无文本摘要)"

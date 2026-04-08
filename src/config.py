@@ -68,6 +68,8 @@ class LLMConfig(BaseModel):
     api_mode: Literal["native", "openai"] = "native"
     # None=自动：本机 loopback 不走系统代理（避免 HTTP(S)_PROXY 导致 502）；true/false 可强制
     trust_env: bool | None = None
+    # True 或环境变量 RUYI72_LLM_LOG=1 时终端 INFO 输出每条 LLM 调用摘要（不含全文 prompt）；与 app.debug 全量 dump 独立
+    log_summary: bool = False
 
     @model_validator(mode="after")
     def _cloud_forces_openai_mode(self) -> LLMConfig:

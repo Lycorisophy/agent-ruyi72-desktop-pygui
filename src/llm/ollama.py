@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from src.config import LLMConfig
-from src.debug_log import log_llm_request, log_llm_response
+from src.debug_log import (
+    is_llm_summary_enabled,
+    log_llm_request,
+    log_llm_response,
+    log_llm_summary,
+)
 
 
 def _messages_from_body(body: dict[str, Any]) -> list[dict[str, str]]:
@@ -174,6 +180,28 @@ class OllamaClient:
             body=body,
             headers=headers,
         )
+        t0 = time.perf_counter()
+
+        def _sum(
+            ok: bool,
+            *,
+            http_status: int | None = None,
+            error: str | None = None,
+            reply_chars: int | None = None,
+        ) -> None:
+            if not is_llm_summary_enabled(self._cfg):
+                return
+            log_llm_summary(
+                caller,
+                llm_cfg=self._cfg,
+                url=chat_url,
+                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+                ok=ok,
+                http_status=http_status,
+                error=error,
+                reply_chars=reply_chars,
+            )
+
         try:
             with httpx.Client(
                 timeout=httpx.Timeout(120.0, connect=10.0),
@@ -182,12 +210,14 @@ class OllamaClient:
                 r = client.post(chat_url, json=body, headers=headers)
         except httpx.ConnectError as e:
             log_llm_response(caller, error=f"ConnectError: {e!s}")
+            _sum(False, error=f"ConnectError: {e!s}")
             raise OllamaClientError(
                 "无法连接到语言模型服务。请确认 base_url 正确且网络可达。"
                 f" ({e!s})"
             ) from e
         except httpx.TimeoutException as e:
             log_llm_response(caller, error=f"Timeout: {e!s}")
+            _sum(False, error=f"Timeout: {e!s}")
             raise OllamaClientError(f"请求超时，请稍后重试或检查模型是否过大。 ({e!s})") from e
 
         if r.status_code == 404:
@@ -198,6 +228,7 @@ class OllamaClient:
                     f" 并确认已 `ollama pull {self._cfg.model}`。"
                 )
             log_llm_response(caller, error=hint404, http_status=404)
+            _sum(False, http_status=404, error=hint404[:400])
             raise OllamaClientError(hint404)
         if r.status_code == 502:
             detail = (r.text or "")[:500]
@@ -212,6 +243,7 @@ class OllamaClient:
                 hint += " 若服务端要求鉴权，请确认 api_key 或对应环境变量正确。"
             err = hint + (f"\n详情: {detail}" if detail else "")
             log_llm_response(caller, error=err, http_status=502)
+            _sum(False, http_status=502, error=err[:400])
             raise OllamaClientError(err)
         if r.status_code == 401 or r.status_code == 403:
             detail = (r.text or "")[:500]
@@ -220,6 +252,7 @@ class OllamaClient:
                 + (f" 详情: {detail}" if detail else "")
             )
             log_llm_response(caller, error=err, http_status=r.status_code)
+            _sum(False, http_status=r.status_code, error=err[:400])
             raise OllamaClientError(err)
         if r.status_code >= 400:
             detail = (r.text or "")[:500]
@@ -228,6 +261,7 @@ class OllamaClient:
                 + (f" 详情: {detail}" if detail else "")
             )
             log_llm_response(caller, error=err, http_status=r.status_code)
+            _sum(False, http_status=r.status_code, error=err[:400])
             raise OllamaClientError(err)
 
         try:
@@ -238,6 +272,7 @@ class OllamaClient:
                 error=f"JSON 解析失败: {e!s}",
                 http_status=r.status_code,
             )
+            _sum(False, http_status=r.status_code, error=f"JSON 解析失败: {e!s}")
             raise OllamaClientError(f"无法解析 Ollama 响应 JSON。 ({e!s})") from e
 
         try:
@@ -247,8 +282,10 @@ class OllamaClient:
                 text = self._parse_native_response(data, r.text)
         except OllamaClientError as err:
             log_llm_response(caller, error=str(err), http_status=r.status_code)
+            _sum(False, http_status=r.status_code, error=str(err)[:400])
             raise
         log_llm_response(caller, text=text, http_status=r.status_code)
+        _sum(True, http_status=r.status_code, reply_chars=len(text))
         return text
 
     def _parse_native_response(self, data: Any, raw: str) -> str:

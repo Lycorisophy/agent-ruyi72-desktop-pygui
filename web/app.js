@@ -10,6 +10,72 @@ function waitForPywebview() {
 
 const api = () => window.pywebview.api;
 
+const LS_LLM_CLIENT_LOG = "ruyi72_llmClientLog";
+
+function isLlmClientLogEnabled() {
+  try {
+    return localStorage.getItem(LS_LLM_CLIENT_LOG) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function applyLlmClientLogCheckbox() {
+  const cb = document.getElementById("llm-client-log-enabled");
+  if (cb) cb.checked = isLlmClientLogEnabled();
+}
+
+function summarizeApiResult(res) {
+  if (res == null) return res;
+  if (typeof res !== "object") return String(res).slice(0, 200);
+  const o = {};
+  if ("ok" in res) o.ok = res.ok;
+  if ("sync" in res) o.sync = res.sync;
+  if ("append_error" in res) o.append_error = res.append_error;
+  if (res.error != null) o.error = String(res.error).slice(0, 200);
+  if (res.message != null) {
+    const m = String(res.message);
+    o.message_len = m.length;
+    if (m.length > 160) o.message_preview = m.slice(0, 160) + "…";
+    else o.message = m;
+  }
+  if (res.stats && typeof res.stats === "object") o.stats = res.stats;
+  return o;
+}
+
+/**
+ * @template T
+ * @param {string} label
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withLlmApiLog(label, fn) {
+  if (!isLlmClientLogEnabled()) {
+    return fn();
+  }
+  const t0 = performance.now();
+  try {
+    const res = await fn();
+    console.info(
+      "[Ruyi LLM API]",
+      label,
+      "ok",
+      `${Math.round(performance.now() - t0)}ms`,
+      summarizeApiResult(res)
+    );
+    return res;
+  } catch (err) {
+    console.warn(
+      "[Ruyi LLM API]",
+      label,
+      "error",
+      `${Math.round(performance.now() - t0)}ms`,
+      err
+    );
+    throw err;
+  }
+}
+
 function copyToClipboard(text) {
   const s = text == null ? "" : String(text);
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -312,6 +378,14 @@ function getModeFromDom() {
   return r ? r.value : "chat";
 }
 
+/** 与后端 mode 值对应的中文展示名 */
+function modeDisplayLabel(mode) {
+  if (mode === "chat") return "安全";
+  if (mode === "react") return "普通";
+  if (mode === "persona") return "拟人";
+  return mode || "—";
+}
+
 function updatePromptTemplateBar() {
   const bar = document.getElementById("prompt-template-bar");
   if (!bar) return;
@@ -389,8 +463,8 @@ async function updateContextRail() {
     <p class="context-kv">类型：${escapeHtml(variantLabel)}</p>
     ${teamLine}
     ${presetLine}
-    <p class="context-kv">模式：${escapeHtml(m.mode || "chat")}</p>
-    <p class="context-kv">ReAct 步数：${escapeHtml(
+    <p class="context-kv">模式：${escapeHtml(modeDisplayLabel(m.mode))}</p>
+    <p class="context-kv">智能体步数上限：${escapeHtml(
       String(m.react_max_steps != null ? m.react_max_steps : 8)
     )}</p>
     <p class="context-kv">工作区：${escapeHtml(m.workspace || "（未设置）")}</p>
@@ -405,6 +479,7 @@ async function updateContextRail() {
     toolsHtml += `<ul class="context-tools-ul">
       <li><strong>read_file</strong> — 读取工作区内 UTF-8 文本</li>
       <li><strong>list_dir</strong> — 列出目录内容</li>
+      <li><strong>write_file</strong> — 写入或覆盖 UTF-8 文本文件</li>
       <li><strong>run_shell</strong> — 在工作区根目录执行 shell 命令</li>
       <li><strong>load_skill</strong> — 按名称加载技能文档</li>
       <li><strong>browse_memory</strong> — 浏览跨会话记忆摘要</li>
@@ -412,10 +487,10 @@ async function updateContextRail() {
     </ul>`;
   } else {
     toolsHtml +=
-      "<p>当前为对话模式，模型不会自动调用工具。需要某技能全文时可发送：<code>加载技能:技能名</code>。</p>";
+      "<p>当前为<strong>安全</strong>模式：仅注入安全技能目录与确认卡片说明，模型不会自动执行 ReAct 工具循环。需要某技能全文时可发送：<code>加载技能:技能名</code>。</p>";
     if (mode === "persona") {
       toolsHtml +=
-        "<p>拟人模式由运行时注入技能与安全说明，仍无 ReAct 工具循环。</p>";
+        "<p>拟人模式由运行时注入技能与安全说明，仍无智能体工具循环。</p>";
     }
   }
   toolsEl.innerHTML = toolsHtml;
@@ -449,6 +524,95 @@ async function updateContextRail() {
 let currentSessionId = null;
 /** @type {object | null} */
 let lastSessionMeta = null;
+
+function setAvatarSpeaking(on) {
+  const stage = document.getElementById("avatar-strip-stage");
+  if (stage) stage.classList.toggle("avatar-speaking", !!on);
+}
+
+/** @param {string} mode */
+function avatarDefaultsForMode(mode) {
+  if (mode === "pixel")
+    return { avatar_mode: "pixel", avatar_ref: "bundled:pixel_cat" };
+  if (mode === "live2d")
+    return { avatar_mode: "live2d", avatar_ref: "bundled:live2d_default" };
+  return { avatar_mode: "off", avatar_ref: "" };
+}
+
+/**
+ * 与下拉框一致；像素模式用「角色」；若未改模式则保留 meta.avatar_ref（如 live2d 或 file:）。
+ */
+function avatarPayloadFromUi() {
+  const sel = document.getElementById("session-avatar-mode");
+  const mode = (sel && sel.value) || "off";
+  const m = lastSessionMeta;
+  if (mode === "pixel") {
+    const pk = document.getElementById("session-avatar-pixel-kind");
+    const k = (pk && pk.value) || "cat";
+    const fromUi = "bundled:pixel_" + k;
+    if (
+      m &&
+      (m.avatar_mode || "off") === "pixel" &&
+      typeof m.avatar_ref === "string" &&
+      m.avatar_ref.startsWith("file:")
+    ) {
+      return { avatar_mode: "pixel", avatar_ref: m.avatar_ref };
+    }
+    return { avatar_mode: "pixel", avatar_ref: fromUi };
+  }
+  if (
+    m &&
+    (m.avatar_mode || "off") === mode &&
+    typeof m.avatar_ref === "string" &&
+    m.avatar_ref.length
+  ) {
+    return { avatar_mode: mode, avatar_ref: m.avatar_ref };
+  }
+  return avatarDefaultsForMode(mode);
+}
+
+function applyAvatarToForm(meta) {
+  const sel = document.getElementById("session-avatar-mode");
+  const wrap = document.getElementById("session-avatar-pixel-kind-wrap");
+  const pixelKind = document.getElementById("session-avatar-pixel-kind");
+  if (!sel) return;
+  if (!meta) {
+    sel.value = "off";
+    if (wrap) {
+      wrap.classList.add("hidden");
+      wrap.setAttribute("aria-hidden", "true");
+    }
+    return;
+  }
+  const m = meta.avatar_mode || "off";
+  sel.value =
+    m === "pixel" || m === "live2d" || m === "off" ? m : "off";
+  if (wrap) {
+    const show = m === "pixel";
+    wrap.classList.toggle("hidden", !show);
+    wrap.setAttribute("aria-hidden", show ? "false" : "true");
+  }
+  if (pixelKind && m === "pixel") {
+    const ref = meta.avatar_ref || "";
+    const match = ref.match(/^bundled:pixel_(cat|dog|rabbit|fox)$/);
+    if (match) pixelKind.value = match[1];
+    else if (ref === "bundled:pixel_default") pixelKind.value = "cat";
+    else pixelKind.value = "cat";
+  }
+}
+
+/**
+ * @param {object | null} meta
+ */
+async function refreshSessionAvatar(meta) {
+  const stage = document.getElementById("avatar-strip-stage");
+  const status = document.getElementById("avatar-strip-status");
+  const strip = document.getElementById("avatar-strip");
+  if (!stage || !window.RuyiAvatar) return;
+  const off = !meta || (meta.avatar_mode || "off") === "off";
+  if (strip) strip.classList.toggle("avatar-strip-off", off);
+  await window.RuyiAvatar.mount(meta, stage, status);
+}
 /** 分屏右侧：当前列出的工作区相对目录，"" 表示根 */
 let workspacePreviewCurrentPath = "";
 /** "dir" | "message" — 消息分屏正文与目录表互斥 */
@@ -703,6 +867,26 @@ let personaThinkingEl = null;
 let personaContentEl = null;
 let personaTurnActive = false;
 
+/** ReAct 阻塞期间由后端 evaluate_js 推送的步骤摘要 */
+let reactStreamProgressEl = null;
+let reactStreamLines = [];
+
+function dispatchReactEvent(evt) {
+  if (!evt || typeof evt !== "object") return;
+  const t = evt.type;
+  if (t === "react.progress" && reactStreamProgressEl) {
+    const line = String(evt.line || "").trim();
+    if (!line) return;
+    reactStreamLines.push(line);
+    if (reactStreamLines.length > 32) {
+      reactStreamLines = reactStreamLines.slice(-32);
+    }
+    reactStreamProgressEl.textContent = reactStreamLines.join("\n");
+    reactStreamProgressEl.scrollTop = reactStreamProgressEl.scrollHeight;
+    scrollMessagesToEnd();
+  }
+}
+
 function scrollMessagesToEnd() {
   const box = document.getElementById("messages");
   if (box) box.scrollTop = box.scrollHeight;
@@ -779,12 +963,14 @@ function dispatchPersonaEvent(evt) {
       personaThinkingEl.textContent += evt.text || "";
     } else if (evt.channel === "content" && personaContentEl) {
       personaContentEl.textContent += evt.text || "";
+      setAvatarSpeaking(true);
     }
     scrollMessagesToEnd();
     return;
   }
 
   if (t === "error") {
+    setAvatarSpeaking(false);
     appendMessage("assistant", evt.message || "错误", true);
     personaTurnActive = false;
     if (personaStreamWrap) {
@@ -805,6 +991,7 @@ function dispatchPersonaEvent(evt) {
   }
 
   if (t === "turn.cancelled" && personaStreamWrap) {
+    setAvatarSpeaking(false);
     personaStreamWrap.classList.add("persona-interrupted");
   }
 
@@ -814,8 +1001,11 @@ function dispatchPersonaEvent(evt) {
   }
 
   if (t === "turn.finished") {
+    setAvatarSpeaking(false);
     personaTurnActive = false;
     personaResetStreamDom();
+    reactStreamProgressEl = null;
+    reactStreamLines = [];
     refreshActive().catch(() => {});
   }
 }
@@ -889,18 +1079,18 @@ function updateTeamModeUi(meta) {
   });
   const steps = document.getElementById("react-steps");
   if (steps) steps.disabled = !!isTeam;
-  updatePersonaComposerUi(meta);
+  updateInterruptButtonUi(meta);
 }
 
-function updatePersonaComposerUi(meta) {
+function updateInterruptButtonUi(meta) {
   const m = meta || lastSessionMeta;
-  const isPersona =
+  const isTeam = m && m.session_variant === "team";
+  const show =
     m &&
-    m.mode === "persona" &&
-    m.session_variant !== "team" &&
-    m.session_variant !== "knowledge";
+    !isTeam &&
+    (m.mode === "persona" || m.mode === "chat" || m.mode === "react");
   const btn = document.getElementById("btn-persona-interrupt");
-  if (btn) btn.classList.toggle("hidden", !isPersona);
+  if (btn) btn.classList.toggle("hidden", !show);
 }
 
 function openTeamModal() {
@@ -1588,8 +1778,11 @@ function applyMetaToForm(meta) {
   if (!meta) {
     lastSessionMeta = null;
     currentSessionId = null;
+    applyAvatarToForm(null);
+    void refreshSessionAvatar({ avatar_mode: "off", avatar_ref: "" });
     updateSessionSchedulerPanelVisibility();
     void refreshSessionSchedulerPanel();
+    updateInterruptButtonUi(null);
     return;
   }
   const prevId = lastSessionMeta && lastSessionMeta.id;
@@ -1611,6 +1804,8 @@ function applyMetaToForm(meta) {
     workspacePreviewCurrentPath = "";
   }
   refreshWorkspacePreviewIfSplitActive();
+  applyAvatarToForm(meta);
+  void refreshSessionAvatar(meta);
   updateSessionSchedulerPanelVisibility();
   void refreshSessionSchedulerPanel();
 }
@@ -1676,10 +1871,13 @@ async function pushWorkspaceAndMode() {
     10
   );
   if (Number.isNaN(react_max_steps)) react_max_steps = 8;
+  const av = avatarPayloadFromUi();
   await api().update_session({
     workspace: workspace || null,
     mode,
     react_max_steps,
+    avatar_mode: av.avatar_mode,
+    avatar_ref: av.avatar_ref,
   });
 }
 
@@ -1717,7 +1915,9 @@ async function onSubmit(e) {
     setBusy(true);
     try {
       await pushWorkspaceAndMode();
-      const res = await api().persona_send(text);
+      const res = await withLlmApiLog("persona_send", () =>
+        api().persona_send(text)
+      );
       if (res.sync) {
         if (!res.ok) {
           appendMessage(
@@ -1737,22 +1937,85 @@ async function onSubmit(e) {
     return;
   }
 
-  const pendingLabel =
-    mode === "react" ? "正在推理与执行…" : "正在思考…";
+  if ((mode === "chat" || mode === "react") && !isTeam) {
+    let reactWaitTimer = null;
+    if (mode === "react") {
+      const box = document.getElementById("messages");
+      removeEmptyPlaceholderIfAny(box);
+      const { wrap: rw, body: rb } = createMessageBubble("pending", false, {
+        initialText: "智能体运行中…（0s）",
+        withCopy: false,
+      });
+      const pr = document.createElement("div");
+      pr.className = "msg-react-progress";
+      pr.setAttribute("role", "log");
+      pr.setAttribute("aria-live", "polite");
+      const cr = rw.querySelector(".msg-copy-row");
+      if (cr) rw.insertBefore(pr, cr);
+      else rw.appendChild(pr);
+      box.appendChild(rw);
+      reactStreamProgressEl = pr;
+      reactStreamLines = [];
+      let sec = 0;
+      reactWaitTimer = setInterval(() => {
+        sec += 1;
+        if (rb) rb.textContent = `智能体运行中…（${sec}s）`;
+      }, 1000);
+      box.scrollTop = box.scrollHeight;
+    }
+    setBusy(true);
+    try {
+      await pushWorkspaceAndMode();
+      const res = await withLlmApiLog("send_message", () =>
+        api().send_message(text)
+      );
+      if (reactWaitTimer) clearInterval(reactWaitTimer);
+      if (res.sync) {
+        if (!res.ok && res.append_error) {
+          appendMessage("assistant", res.message || "失败", true);
+        } else if (res.ok && res.message) {
+          appendMessage("assistant", res.message, false);
+        }
+      }
+    } catch (err) {
+      if (reactWaitTimer) clearInterval(reactWaitTimer);
+      appendMessage("assistant", "调用失败：" + String(err), true);
+    } finally {
+      setBusy(false);
+    }
+    return;
+  }
+
+  const pendingBase = "正在思考…";
 
   appendMessageInstant("user", text, false);
   const box = document.getElementById("messages");
-  const { wrap: pendingWrap } = createMessageBubble("pending", false, {
-    initialText: pendingLabel,
-  });
+  const { wrap: pendingWrap, body: pendingBody } = createMessageBubble(
+    "pending",
+    false,
+    {
+      initialText: `${pendingBase}（0s）`,
+    }
+  );
   box.appendChild(pendingWrap);
   const pendingEl = pendingWrap;
+  let waitSec = 0;
+  const pendingTimer = setInterval(() => {
+    waitSec += 1;
+    if (pendingBody) {
+      pendingBody.textContent = `${pendingBase}（${waitSec}s）`;
+    }
+  }, 1000);
+
   box.scrollTop = box.scrollHeight;
 
   setBusy(true);
   try {
     await pushWorkspaceAndMode();
-    const res = await api().send_message(text);
+    const res = await withLlmApiLog("send_message", () =>
+      api().send_message(text)
+    );
+    clearInterval(pendingTimer);
     pendingEl.remove();
     setMainWaiting(false);
     await refreshActive({ typewriterLastAssistant: true });
@@ -1760,6 +2023,7 @@ async function onSubmit(e) {
       appendMessage("assistant", res.message, true);
     }
   } catch (err) {
+    clearInterval(pendingTimer);
     pendingEl.remove();
     setMainWaiting(false);
     appendMessage("assistant", "调用失败：" + String(err), true);
@@ -2032,6 +2296,7 @@ async function loadTaskRunsTable() {
 
 function init() {
   window.__ruyiPersonaDispatch = dispatchPersonaEvent;
+  window.__ruyiReactDispatch = dispatchReactEvent;
 
   applySavedSessionListPrefs();
   applyTheme(getSavedTheme());
@@ -2053,6 +2318,20 @@ function init() {
     llmKeyVis.addEventListener("change", () => {
       llmKeyInp.type = llmKeyVis.checked ? "text" : "password";
     });
+  }
+  const llmClientLog = document.getElementById("llm-client-log-enabled");
+  if (llmClientLog) {
+    llmClientLog.addEventListener("change", () => {
+      try {
+        localStorage.setItem(
+          LS_LLM_CLIENT_LOG,
+          llmClientLog.checked ? "1" : "0"
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    });
+    applyLlmClientLogCheckbox();
   }
   const btnIdentityReload = document.getElementById("btn-identity-reload");
   if (btnIdentityReload) {
@@ -2314,6 +2593,47 @@ function init() {
 
   document.getElementById("chat-form").addEventListener("submit", onSubmit);
 
+  const sessionAvatarMode = document.getElementById("session-avatar-mode");
+  const sessionAvatarPixelKind = document.getElementById(
+    "session-avatar-pixel-kind"
+  );
+  if (sessionAvatarMode) {
+    sessionAvatarMode.addEventListener("change", async () => {
+      try {
+        const v = avatarPayloadFromUi();
+        const res = await api().update_session({
+          avatar_mode: v.avatar_mode,
+          avatar_ref: v.avatar_ref,
+        });
+        if (res && res.meta) {
+          lastSessionMeta = res.meta;
+          applyAvatarToForm(res.meta);
+          await refreshSessionAvatar(res.meta);
+        }
+      } catch (e) {
+        appendMessage("assistant", "形象设置失败：" + String(e), true);
+      }
+    });
+  }
+  if (sessionAvatarPixelKind) {
+    sessionAvatarPixelKind.addEventListener("change", async () => {
+      try {
+        const v = avatarPayloadFromUi();
+        const res = await api().update_session({
+          avatar_mode: v.avatar_mode,
+          avatar_ref: v.avatar_ref,
+        });
+        if (res && res.meta) {
+          lastSessionMeta = res.meta;
+          applyAvatarToForm(res.meta);
+          await refreshSessionAvatar(res.meta);
+        }
+      } catch (e) {
+        appendMessage("assistant", "形象设置失败：" + String(e), true);
+      }
+    });
+  }
+
   document.getElementById("btn-toggle-split").addEventListener("click", () => {
     const on = !document.body.classList.contains("split-active");
     setSplitActive(on);
@@ -2333,7 +2653,7 @@ function init() {
   if (personaInterruptBtn) {
     personaInterruptBtn.addEventListener("click", async () => {
       try {
-        await api().persona_interrupt();
+        await withLlmApiLog("interrupt_turn", () => api().interrupt_turn());
       } catch (_) {
         /* ignore */
       }
@@ -2507,7 +2827,9 @@ function init() {
     setGlobalLoadingText("正在提取记忆，请稍候…");
     setMemoryModalBusy(true);
     try {
-      const res = await api().extract_memory(text);
+      const res = await withLlmApiLog("extract_memory", () =>
+        api().extract_memory(text)
+      );
       const st = res.stats || {};
       let msg = "";
       if (!res.ok) {

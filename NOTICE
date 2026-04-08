@@ -1,0 +1,9 @@
+Third-party components (not shipped in this repository)
+--------------------------------------------------------
+
+Live2D Cubism SDK for Web: runtime files such as live2dcubismcore.min.js are
+distributed by Live2D Inc. under a separate license. Users who enable the
+in-app Live2D avatar feature must obtain the SDK from Live2D and place
+web/live2d/Core/live2dcubismcore.min.js locally. Redistribution of the SDK
+with this project may require compliance with Live2D's SDK Release License;
+see https://www.live2d.com/download/cubism-sdk/release-license/

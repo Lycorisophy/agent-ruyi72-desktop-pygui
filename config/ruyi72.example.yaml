@@ -1,5 +1,10 @@
 # 复制为项目根目录 ruyi72.yaml，或 ~/.ruyi72/ruyi72.yaml
 # 也可用环境变量 RUYI72_CONFIG 指向配置文件路径
+#
+# 常用环境变量（与 YAML 互补）：
+#   RUYI72_DEBUG=1          — 控制台 DEBUG 级 LLM 请求/响应摘要
+#   RUYI72_LLM_LOG=1        — 控制台 INFO 每轮 LLM 单行摘要（与 llm.log_summary 类似）
+#   RUYI72_REACT_TRACE=1    — ReAct 每次工具调用的名称与截断参数/结果（INFO）
 
 version: 1
 
@@ -7,7 +12,7 @@ app:
   title: 如意72
   width: 960
   height: 640
-  # true 时（或环境变量 RUYI72_DEBUG=1）控制台输出 LLM 请求/响应摘要；可能含对话片段，勿在公共环境开启
+  # true 时（或环境变量 RUYI72_DEBUG=1）控制台输出 LLM 请求/响应全文级摘要；可能含对话片段，勿在公共环境开启
   # debug: false
 
 llm:
@@ -21,6 +26,8 @@ llm:
   api_mode: openai
   # 本机 loopback 默认不走系统代理；仍 HTTP 502 时可显式设为 false
   # trust_env: false
+  # true 或环境变量 RUYI72_LLM_LOG=1：终端 INFO 每轮 LLM 单行摘要（耗时、模型、URL、状态；不含全文 prompt）。与 app.debug 独立
+  # log_summary: false
   # 本地默认可不填。远程 / Ollama Cloud / 需鉴权的反代：填写令牌，或设 OLLAMA_API_KEY
   # api_key: ""
   # 示例（勿与 ollama 同时生效；仅作参考）:
