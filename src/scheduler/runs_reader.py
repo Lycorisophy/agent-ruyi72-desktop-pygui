@@ -13,7 +13,7 @@ from src.storage.session_store import SessionStore
 _MAX_GLOBAL_BYTES = 524_288
 _MAX_GLOBAL_LINES = 2000
 _MAX_SESSION_TAIL_LINES = 500
-_MAX_TOTAL_ENTRIES = 3000
+_MAX_TOTAL_ENTRIES = 1000
 
 
 def _read_tail_text_lines(path: Path, max_lines: int, max_bytes: int) -> list[str]:

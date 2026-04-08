@@ -1805,7 +1805,13 @@ function renderBuiltinSchedulerRows(container, tasks, kind, sessionId, onAfterDe
     const summary = `${t.enabled === false ? "[停] " : ""}${tr.type || "?"} ${
       tr.value != null && tr.value !== "" ? String(tr.value) : ""
     } → ${ac.type || "?"}`;
-    row.appendChild(el("span", "", summary));
+    const lab = (t.label && String(t.label).trim()) ? String(t.label).trim() : "";
+    const textWrap = el("div", "builtin-scheduler-task-block");
+    if (lab) {
+      textWrap.appendChild(el("div", "scheduler-task-title", lab));
+    }
+    textWrap.appendChild(el("div", "scheduler-task-meta", summary));
+    row.appendChild(textWrap);
     const idc = document.createElement("code");
     idc.textContent = t.id || "";
     row.appendChild(idc);
@@ -1915,8 +1921,10 @@ function toggleSessionSchedTriggerFields() {
 function toggleSessionSchedActionFields() {
   const sel = document.getElementById("session-sched-action");
   const wrap = document.getElementById("session-sched-msg-wrap");
-  if (!sel || !wrap) return;
-  wrap.classList.toggle("hidden", sel.value !== "append_system_message");
+  const llm = document.getElementById("session-sched-llm-wrap");
+  if (!sel) return;
+  if (wrap) wrap.classList.toggle("hidden", sel.value !== "append_system_message");
+  if (llm) llm.classList.toggle("hidden", sel.value !== "call_llm_once");
 }
 
 function openTaskRunsView() {
@@ -1957,11 +1965,12 @@ async function loadTaskRunsTable() {
     table.innerHTML =
       "<thead><tr>" +
       "<th scope=\"col\">时间</th>" +
+      "<th scope=\"col\">任务名称</th>" +
       "<th scope=\"col\">范围</th>" +
       "<th scope=\"col\">会话</th>" +
       "<th scope=\"col\">task_id</th>" +
       "<th scope=\"col\">动作</th>" +
-      "<th scope=\"col\">摘要 / 状态</th>" +
+      "<th scope=\"col\">详情</th>" +
       "</tr></thead><tbody></tbody>";
     const tb = table.querySelector("tbody");
     for (const e of entries) {
@@ -1973,23 +1982,49 @@ async function loadTaskRunsTable() {
               e.session_id || ""
             )}</code>`
           : "—";
-      const prev =
-        e.preview != null && String(e.preview) !== ""
-          ? escapeHtml(String(e.preview))
-          : e.ok === false
-            ? "失败"
-            : "ok";
+      let detailHtml = "";
+      if (e.action === "call_llm_once") {
+        const bits = [];
+        if (e.ask_only === true) bits.push("安全模式（仅 SAFE 工具）");
+        if (e.model) bits.push(`模型: ${escapeHtml(String(e.model))}`);
+        if (e.provider) bits.push(`提供商: ${escapeHtml(String(e.provider))}`);
+        if (e.latency_ms != null) bits.push(`耗时: ${e.latency_ms}ms`);
+        if (e.system_prompt) bits.push(`系统提示:\n${escapeHtml(String(e.system_prompt))}`);
+        if (e.user_prompt) bits.push(`用户:\n${escapeHtml(String(e.user_prompt))}`);
+        if (e.ok !== false && e.assistant_text) {
+          bits.push(`模型回复:\n${escapeHtml(String(e.assistant_text))}`);
+        }
+        if (e.ok === false && e.error) {
+          bits.push(`错误:\n${escapeHtml(String(e.error))}`);
+        }
+        detailHtml =
+          bits.length > 0
+            ? `<pre class="task-runs-detail">${bits.join("\n\n")}</pre>`
+            : "—";
+      } else {
+        const prev =
+          e.preview != null && String(e.preview) !== ""
+            ? escapeHtml(String(e.preview))
+            : e.ok === false
+              ? "失败"
+              : "ok";
+        detailHtml = prev;
+      }
+      const lab = (e.label && String(e.label).trim()) ? escapeHtml(String(e.label).trim()) : "—";
       tr.innerHTML =
         `<td>${escapeHtml(e.ts || "")}</td>` +
+        `<td>${lab}</td>` +
         `<td>${escapeHtml(scope)}</td>` +
         `<td>${sess}</td>` +
         `<td><code>${escapeHtml(e.task_id || "")}</code></td>` +
         `<td>${escapeHtml(e.action || "")}</td>` +
-        `<td>${prev}</td>`;
+        `<td>${detailHtml}</td>`;
       tb.appendChild(tr);
     }
     wrap.appendChild(table);
-    if (st) st.textContent = `共 ${entries.length} 条（尾部汇总）`;
+    if (st) {
+      st.textContent = `共 ${entries.length} 条（展示最近最多 1000 条）`;
+    }
   } catch (err) {
     if (st) st.textContent = String(err);
   }
@@ -2063,11 +2098,27 @@ function init() {
         sec = Math.max(30, Math.min(sec, 604800));
         trigger = { type: "interval_sec", value: sec };
       }
+      const labelInp = document.getElementById("global-sched-label");
+      const labelRaw = labelInp ? String(labelInp.value || "").trim().slice(0, 200) : "";
+      const usr = (document.getElementById("global-sched-user") || {}).value || "";
+      const ut = String(usr).trim();
+      if (!ut) {
+        setBuiltinSchedulerStatus("请填写「任务」内容。");
+        return;
+      }
+      const askOnly = !!(document.getElementById("global-sched-ask-only") || {}).checked;
+      const action = {
+        type: "call_llm_once",
+        system_prompt: "",
+        user_prompt: ut.slice(0, 12000),
+        ask_only: askOnly,
+      };
       const payload = {
         kind: "global",
+        label: labelRaw,
         enabled: !!(en && en.checked),
         trigger,
-        action: { type: "noop" },
+        action,
         missed_run_after_wake: missed ? missed.value : "skip",
         run_when_session_inactive: true,
         persist_output_to: "messages",
@@ -2080,6 +2131,11 @@ function init() {
           return;
         }
         setBuiltinSchedulerStatus("已添加。");
+        if (labelInp) labelInp.value = "";
+        const uEl = document.getElementById("global-sched-user");
+        const askEl = document.getElementById("global-sched-ask-only");
+        if (uEl) uEl.value = "";
+        if (askEl) askEl.checked = false;
         await refreshGlobalSchedulerList();
       } catch (e) {
         setBuiltinSchedulerStatus(String(e));
@@ -2122,12 +2178,28 @@ function init() {
           return;
         }
         action = { type: "append_system_message", text: t };
+      } else if (act && act.value === "call_llm_once") {
+        const sys = (document.getElementById("session-sched-sys") || {}).value || "";
+        const usr = (document.getElementById("session-sched-user") || {}).value || "";
+        const ut = String(usr).trim();
+        if (!ut) {
+          if (st) st.textContent = "请填写用户提示。";
+          return;
+        }
+        action = {
+          type: "call_llm_once",
+          system_prompt: String(sys).trim().slice(0, 4000),
+          user_prompt: ut.slice(0, 12000),
+        };
       } else {
         action = { type: "noop" };
       }
+      const labelInp = document.getElementById("session-sched-label");
+      const labelRaw = labelInp ? String(labelInp.value || "").trim().slice(0, 200) : "";
       const payload = {
         kind: "session",
         session_id: currentSessionId,
+        label: labelRaw,
         enabled: !!(en && en.checked),
         trigger,
         action,
@@ -2143,6 +2215,11 @@ function init() {
           return;
         }
         if (st) st.textContent = "已添加。";
+        if (labelInp) labelInp.value = "";
+        const uEl = document.getElementById("session-sched-user");
+        const sEl = document.getElementById("session-sched-sys");
+        if (uEl) uEl.value = "";
+        if (sEl) sEl.value = "";
         await refreshSessionSchedulerPanel();
       } catch (e) {
         if (st) st.textContent = String(e);

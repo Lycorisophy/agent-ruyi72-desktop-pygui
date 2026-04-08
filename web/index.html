@@ -26,9 +26,9 @@
     <div class="sidebar-head">
       <h2 class="sidebar-title">会话</h2>
       <div class="sidebar-head-actions">
-        <button type="button" id="btn-new-session" class="btn btn-small">新建</button>
-        <button type="button" id="btn-kb-session" class="btn btn-small" title="知识库：本地文档目录与预设任务">知识库</button>
-        <button type="button" id="btn-team-session" class="btn btn-small" title="需配置至少 2 条 team.models">团队</button>
+        <button type="button" id="btn-new-session" class="btn btn-small" title="创建标准对话会话">新建普通模式会话</button>
+        <button type="button" id="btn-kb-session" class="btn btn-small" title="知识库模式：本地文档目录与预设任务">新建知识库模式会话</button>
+        <button type="button" id="btn-team-session" class="btn btn-small" title="多智能体模式：需配置至少 2 条 team.models">新建多智能体模式会话</button>
       </div>
     </div>
     <div class="sidebar-session-toolbar">
@@ -73,8 +73,8 @@
     <header class="header">
       <div class="header-top">
         <h1 class="title">如意72</h1>
-        <button type="button" id="btn-task-runs-view" class="btn btn-small btn-ghost" title="查看全局与会话的定时任务运行记录（只读）">
-          定时任务记录
+        <button type="button" id="btn-task-runs-view" class="btn btn-small btn-ghost" title="查看全局定时任务运行记录（只读，最近最多 1000 条）">
+          全局定时任务记录
         </button>
         <label class="theme-select-field">
           <span>主题色</span>
@@ -178,8 +178,20 @@
       </details>
       <details class="settings-details" id="builtin-scheduler-details">
         <summary class="settings-summary">全局定时任务（高级）</summary>
-        <p class="settings-hint">全局任务仅在空闲时由后端调度；当前动作仅支持 noop。运行记录见「定时任务记录」。</p>
+        <p class="settings-hint">全局任务在空闲时调度，均调用模型；可选安全模式（仅 SAFE 级工具，无 shell）。执行过程写入「全局定时任务记录」视图。</p>
         <div class="settings-form-grid" id="global-scheduler-create-form">
+          <label>
+            <span>任务名称（可选）</span>
+            <input type="text" id="global-sched-label" class="field-input" maxlength="200" placeholder="例如：每小时空闲探活" autocomplete="off" />
+          </label>
+          <label class="field-row">
+            <input type="checkbox" id="global-sched-ask-only" />
+            <span>安全模式（仅 SAFE 级工具：工作区只读、记忆浏览/搜索、加载技能等；无 shell）</span>
+          </label>
+          <label>
+            <span>任务</span>
+            <textarea id="global-sched-user" class="field-input" rows="5" maxlength="12000" placeholder="触发时作为用户消息发送给当前配置的模型"></textarea>
+          </label>
           <label>
             <span>触发器</span>
             <select id="global-sched-trigger" class="field-input" aria-label="全局任务触发器类型">
@@ -243,6 +255,10 @@
         <div id="session-scheduler-body" class="session-scheduler-body">
           <div class="settings-form-grid session-scheduler-form">
             <label>
+              <span>任务名称（可选）</span>
+              <input type="text" id="session-sched-label" class="field-input" maxlength="200" placeholder="例如：每日总结提醒" autocomplete="off" />
+            </label>
+            <label>
               <span>触发器</span>
               <select id="session-sched-trigger" class="field-input">
                 <option value="interval_sec">间隔（秒）</option>
@@ -262,12 +278,23 @@
               <select id="session-sched-action" class="field-input">
                 <option value="noop">noop（仅记录）</option>
                 <option value="append_system_message">追加 system 消息</option>
+                <option value="call_llm_once">大模型单次问答</option>
               </select>
             </label>
             <label id="session-sched-msg-wrap" class="hidden">
               <span>消息正文</span>
               <textarea id="session-sched-msg" class="field-input" rows="3" placeholder="触发时写入本会话"></textarea>
             </label>
+            <div id="session-sched-llm-wrap" class="global-sched-llm-wrap hidden">
+              <label>
+                <span>系统提示（可选）</span>
+                <textarea id="session-sched-sys" class="field-input" rows="2" maxlength="4000" placeholder="留空则使用默认系统提示"></textarea>
+              </label>
+              <label>
+                <span>用户提示（发给模型）</span>
+                <textarea id="session-sched-user" class="field-input" rows="5" maxlength="12000" placeholder="触发时调用当前会话配置的模型"></textarea>
+              </label>
+            </div>
             <label>
               <span>结果落盘</span>
               <select id="session-sched-persist" class="field-input">
@@ -438,13 +465,13 @@
     </div>
   </div>
 
-  <!-- 定时任务运行记录（只读） -->
+  <!-- 全局定时任务记录（只读，最近最多 1000 条） -->
   <div id="task-runs-overlay" class="task-runs-overlay hidden" aria-hidden="true">
     <div class="task-runs-overlay-inner" role="document">
       <header class="task-runs-head">
         <div class="task-runs-head-text">
-          <h2 class="task-runs-title">定时任务运行记录</h2>
-          <p class="task-runs-sub">只读汇总（全局 <code>global_task_runs.log</code> 与各会话 <code>task_runs.log</code> 尾部）。</p>
+          <h2 class="task-runs-title">全局定时任务记录</h2>
+          <p class="task-runs-sub">只读汇总；合并全局 <code>global_task_runs.log</code> 与各会话 <code>task_runs.log</code> 尾部，按时间取<strong>最近最多 1000 条</strong>。</p>
         </div>
         <div class="task-runs-head-actions">
           <button type="button" id="btn-task-runs-refresh" class="btn btn-small">刷新</button>

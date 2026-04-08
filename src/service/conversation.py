@@ -17,6 +17,7 @@ from src.agent.action_card import (
 from src.agent.memory_tools import build_memory_bootstrap_block
 from src.agent.persona_runtime import CHECKPOINT_NAME, PersonaRuntime
 from src.agent.react import run_react
+from src.agent.react_lc import run_scheduler_safe_agent
 from src.agent.team_turn import run_team_turn
 from src.config import LLMConfig, PersonaConfig, RuyiConfig
 from src.debug_log import log_send_message_context
@@ -352,6 +353,64 @@ class ConversationService:
         self._store.save_messages(sid, messages)
         if self._active_id == sid:
             self._meta, self._messages = self._store.load(sid)
+
+    def _resolve_scheduler_workspace(self, *, kind: str, session_id: str | None) -> str:
+        """全局任务使用 ~/.ruyi72；会话任务优先使用会话工作区（否则回退 ~/.ruyi72）。"""
+        home_ruyi = str((Path.home() / ".ruyi72").resolve())
+        if kind != "session":
+            return home_ruyi
+        sid = (session_id or "").strip()
+        if not sid:
+            return home_ruyi
+        try:
+            meta, _ = self._store.load(sid)
+        except Exception:
+            return home_ruyi
+        ws = (meta.workspace or "").strip()
+        if not ws:
+            return home_ruyi
+        p = Path(ws).expanduser().resolve()
+        return str(p) if p.is_dir() else home_ruyi
+
+    def run_scheduler_llm_once(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        ask_only: bool = False,
+        task_kind: str = "global",
+        session_id: str | None = None,
+    ) -> str:
+        """内置定时任务单次调用当前 LLM 配置；不计入会话历史。安全模式走仅 SAFE 工具的 Agent。"""
+        user_t = (user_prompt or "").strip()
+        if not user_t:
+            raise ValueError("user_prompt 为空")
+        raw_sys = (system_prompt or "").strip()
+
+        if ask_only:
+            ws = self._resolve_scheduler_workspace(kind=task_kind, session_id=session_id)
+            ms = max(4, min(24, self._react_default))
+            ok, text = run_scheduler_safe_agent(
+                self._llm,
+                workspace=ws,
+                user_prompt=user_t,
+                extra_system=raw_sys,
+                max_steps=ms,
+            )
+            if not ok:
+                raise OllamaClientError(text)
+            return text
+
+        sys_t = raw_sys if raw_sys else "你是智能助手。请根据用户说明直接作答，简洁准确。"
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": sys_t},
+            {"role": "user", "content": user_t},
+        ]
+        with self.llm_busy():
+            return OllamaClient(self._llm).chat(
+                messages,
+                caller="ConversationService.run_scheduler_llm_once",
+            )
 
     def _kb_system_extra(self) -> str | None:
         if self._meta is None or self._meta.session_variant != "knowledge":

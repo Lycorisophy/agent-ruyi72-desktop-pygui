@@ -117,9 +117,9 @@ flowchart LR
 
 ## 8. API 与 UI（已实现要点）
 
-- **设置 → 全局定时任务**：创建（当前仅 `noop`）、列表、删除；数据在 `~/.ruyi72/global_scheduled_tasks.json`。
+- **设置 → 全局定时任务**：创建表单顺序为——任务名称（可选）、可选「安全模式」、`call_llm_once` 的 `action.ask_only: bool`（为真时走 [`run_scheduler_safe_agent`](../src/agent/react_lc.py)：仅 SAFE 工具子集，无 `run_shell`；为假时单次 chat）；「任务」正文、触发器、间隔/每日时刻、唤醒后遗漏、启用、添加与刷新列表；数据在 `~/.ruyi72/global_scheduled_tasks.json`。
 - **主界面「本会话定时任务」**（须先选中会话）：创建 `noop` / `append_system_message`、列表、删除；数据在 `sessions/<id>/scheduled_tasks.json`。
-- **「定时任务记录」**（全屏只读）：聚合 `~/.ruyi72/global_task_runs.log` 与各会话目录 `task_runs.log` 的**尾部**（扫描会话数受 `builtin_scheduler.max_sessions_scanned` 等限制）。
+- **「全局定时任务记录」**（全屏只读）：聚合 `~/.ruyi72/global_task_runs.log` 与各会话目录 `task_runs.log` 的**尾部**，按时间合并后展示**最近最多 1000 条**（扫描会话数受 `builtin_scheduler.max_sessions_scanned` 等限制）。
 - **Api**：`list_scheduled_tasks`、`save_scheduled_task`、`delete_scheduled_task`、`list_scheduled_task_runs`（只读，不写盘）。
 - **ReAct 工具**：`save_session_scheduled_task`（参数见 [`src/agent/react_lc.py`](../src/agent/react_lc.py)），固定绑定**当前会话 id**，模型不可改会话。
 

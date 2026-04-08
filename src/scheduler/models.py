@@ -44,17 +44,39 @@ class AppendSystemMessageAction(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
 
 
+class CallLlmOnceAction(BaseModel):
+    """单次调用当前配置的 LLM，不读会话历史；结果写入运行记录（及可选会话消息）。"""
+
+    type: Literal["call_llm_once"] = "call_llm_once"
+    system_prompt: str = Field(default="", max_length=4000)
+    user_prompt: str = Field(min_length=1, max_length=12000)
+    ask_only: bool = Field(
+        default=False,
+        description="安全模式：仅允许 SAFE 级工具（只读工作区/记忆/技能加载等，无 shell）",
+    )
+
+    @field_validator("system_prompt", "user_prompt")
+    @classmethod
+    def _strip_prompts(cls, v: str) -> str:
+        return (v or "").strip()
+
+
 class ScheduledTask(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     kind: TaskKind
     session_id: str | None = None
+    label: str = Field(
+        default="",
+        max_length=200,
+        description="人类可读名称，便于列表与运行记录识别（与动作正文无关）",
+    )
     enabled: bool = True
     trigger: Annotated[
         Union[IntervalTrigger, DailyAtTrigger],
         Field(discriminator="type"),
     ]
     action: Annotated[
-        Union[NoopAction, AppendSystemMessageAction],
+        Union[NoopAction, AppendSystemMessageAction, CallLlmOnceAction],
         Field(discriminator="type"),
     ]
     next_run_at: str | None = None
@@ -65,7 +87,13 @@ class ScheduledTask(BaseModel):
     schema_version: int = 1
 
     def requires_llm(self) -> bool:
-        return False
+        return isinstance(self.action, CallLlmOnceAction)
+
+    @field_validator("label")
+    @classmethod
+    def _strip_label(cls, v: str) -> str:
+        s = (v or "").strip()
+        return s[:200]
 
     @model_validator(mode="after")
     def _session_id_for_kind(self) -> ScheduledTask:
