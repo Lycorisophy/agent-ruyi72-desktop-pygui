@@ -5,6 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>如意72</title>
   <link rel="stylesheet" href="style.css" />
+  <script>
+    (function () {
+      try {
+        var k = "ruyi72_theme";
+        var allowed = ["default", "emerald", "violet", "amber"];
+        var v = localStorage.getItem(k);
+        document.documentElement.setAttribute(
+          "data-theme",
+          allowed.indexOf(v) >= 0 ? v : "default"
+        );
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "default");
+      }
+    })();
+  </script>
 </head>
 <body class="app">
   <aside class="sidebar">
@@ -55,7 +70,18 @@
   </aside>
   <div class="content">
     <header class="header">
-      <h1 class="title">如意72</h1>
+      <div class="header-top">
+        <h1 class="title">如意72</h1>
+        <label class="theme-select-field">
+          <span>主题色</span>
+          <select id="theme-select" class="theme-select" aria-label="页面主题">
+            <option value="default">默认（蓝灰）</option>
+            <option value="emerald">翠绿</option>
+            <option value="violet">紫罗兰</option>
+            <option value="amber">琥珀</option>
+          </select>
+        </label>
+      </div>
       <p id="settings-line" class="settings"></p>
     </header>
     <section class="session-bar">

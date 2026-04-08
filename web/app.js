@@ -116,6 +116,9 @@ let messageRenderGen = 0;
 
 const LS_SESSION_SORT = "ruyi72_sessionSort";
 const LS_SESSION_GROUP = "ruyi72_sessionGroup";
+const LS_THEME = "ruyi72_theme";
+
+const THEME_IDS = ["default", "emerald", "violet", "amber"];
 
 const SORT_UPDATED_DESC = "updated_desc";
 const SORT_TITLE_ASC = "title_asc";
@@ -159,6 +162,28 @@ function applySavedSessionListPrefs() {
   const groupEl = document.getElementById("session-group");
   if (sortEl) sortEl.value = getSessionSortMode();
   if (groupEl) groupEl.value = getSessionGroupMode();
+}
+
+function getSavedTheme() {
+  try {
+    const v = localStorage.getItem(LS_THEME);
+    if (THEME_IDS.includes(v)) return v;
+  } catch (_) {
+    /* ignore */
+  }
+  return "default";
+}
+
+function applyTheme(themeId) {
+  const t = THEME_IDS.includes(themeId) ? themeId : "default";
+  document.documentElement.dataset.theme = t;
+  try {
+    localStorage.setItem(LS_THEME, t);
+  } catch (_) {
+    /* ignore */
+  }
+  const themeEl = document.getElementById("theme-select");
+  if (themeEl) themeEl.value = t;
 }
 
 function sessionDisplayTitle(s) {
@@ -1205,6 +1230,12 @@ function init() {
   window.__ruyiPersonaDispatch = dispatchPersonaEvent;
 
   applySavedSessionListPrefs();
+  applyTheme(getSavedTheme());
+  const themeSelect = document.getElementById("theme-select");
+  if (themeSelect) {
+    themeSelect.addEventListener("change", () => applyTheme(themeSelect.value));
+  }
+
   const sortEl = document.getElementById("session-sort");
   const groupEl = document.getElementById("session-group");
   if (sortEl) {
