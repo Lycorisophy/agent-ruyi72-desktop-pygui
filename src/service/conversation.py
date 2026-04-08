@@ -11,6 +11,7 @@ from typing import Any
 from src.agent.tools import ToolError, safe_child
 from src.agent.action_card import (
     split_reply_action_card,
+    strip_action_card_markers,
     supersede_pending_cards,
     utc_now_iso,
 )
@@ -23,7 +24,11 @@ from src.config import LLMConfig, PersonaConfig, RuyiConfig
 from src.debug_log import log_send_message_context
 from src.llm.ollama import OllamaClient, OllamaClientError
 from src.llm.knowledge_prompts import knowledge_base_system_hint
-from src.llm.prompts import action_card_system_hint, build_system_block
+from src.llm.prompts import (
+    SCHEDULED_TASK_REPLY_RULES,
+    action_card_system_hint,
+    build_system_block,
+)
 from src.skills.loader import build_safe_skills_prompt, get_registry
 from src.storage.session_store import Mode, SessionMeta, SessionStore
 
@@ -387,30 +392,36 @@ class ConversationService:
             raise ValueError("user_prompt 为空")
         raw_sys = (system_prompt or "").strip()
 
+        user_sched = f"[定时任务]\n\n{user_t}"
+
         if ask_only:
             ws = self._resolve_scheduler_workspace(kind=task_kind, session_id=session_id)
             ms = max(4, min(24, self._react_default))
             ok, text = run_scheduler_safe_agent(
                 self._llm,
                 workspace=ws,
-                user_prompt=user_t,
+                user_prompt=user_sched,
                 extra_system=raw_sys,
                 max_steps=ms,
             )
             if not ok:
                 raise OllamaClientError(text)
-            return text
+            return strip_action_card_markers(text)
 
-        sys_t = raw_sys if raw_sys else "你是智能助手。请根据用户说明直接作答，简洁准确。"
+        base = raw_sys if raw_sys else "你是智能助手。请根据用户说明直接作答，简洁准确。"
+        sys_t = base + "\n\n" + SCHEDULED_TASK_REPLY_RULES
         messages: list[dict[str, str]] = [
             {"role": "system", "content": sys_t},
-            {"role": "user", "content": user_t},
+            {"role": "user", "content": user_sched},
         ]
         with self.llm_busy():
-            return OllamaClient(self._llm).chat(
+            reply = OllamaClient(self._llm).chat(
                 messages,
                 caller="ConversationService.run_scheduler_llm_once",
             )
+        visible, _card = split_reply_action_card(reply)
+        out = (visible or "").strip() if (visible or "").strip() else (reply or "").strip()
+        return strip_action_card_markers(out)
 
     def _kb_system_extra(self) -> str | None:
         if self._meta is None or self._meta.session_variant != "knowledge":

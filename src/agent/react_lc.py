@@ -14,7 +14,7 @@ from src.agent.memory_tools import browse_memory_formatted, search_memory_keywor
 from src.agent.tools import tool_list_dir, tool_read_file, tool_run_shell
 from src.config import LLMConfig
 from src.llm.chat_model import chat_model_from_config
-from src.llm.prompts import action_card_system_hint, build_system_block
+from src.llm.prompts import SCHEDULED_TASK_REPLY_RULES, action_card_system_hint, build_system_block
 from src.skills.loader import build_react_skills_block, get_registry
 
 
@@ -227,8 +227,8 @@ def run_scheduler_safe_agent(
     )
     if (extra_system or "").strip():
         react_body = react_body + "\n\n【调度补充说明】\n" + extra_system.strip()
+    react_body = react_body + "\n\n" + SCHEDULED_TASK_REPLY_RULES
     system_prompt = build_system_block(extra_system=react_body)
-    system_prompt = system_prompt + "\n\n" + action_card_system_hint()
 
     agent = create_agent(
         llm,

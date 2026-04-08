@@ -116,6 +116,13 @@ def split_reply_action_card(raw: str) -> tuple[str, dict[str, Any] | None]:
     return raw.strip(), None
 
 
+def strip_action_card_markers(raw: str) -> str:
+    """移除回复中的 action_card 围栏（定时任务等不需卡片时使用）。"""
+    t = ACTION_CARD_FENCE.sub("", raw)
+    t = ACTION_CARD_XML.sub("", t)
+    return t.strip()
+
+
 def sanitize_card_from_storage(card: Any) -> dict[str, Any] | None:
     """从磁盘读出时校验，防止畸形或过大对象。"""
     if not isinstance(card, dict):
