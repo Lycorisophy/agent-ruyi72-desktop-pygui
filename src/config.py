@@ -7,19 +7,57 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _DEFAULT_APP_TITLE = "如意72"
+
+# OpenAI 兼容 HTTP 的云厂商（非 Ollama 时仅走 /v1/chat/completions）
+LLMProvider = Literal["ollama", "minimax", "deepseek", "qwen"]
+
+LOCAL_OVERRIDE_REL = Path(".ruyi72") / "ruyi72.local.yaml"
+
+
+def local_override_config_path() -> Path:
+    """界面保存的 LLM 等覆盖层，合并优先级高于首个命中的主 YAML。"""
+    return Path.home() / LOCAL_OVERRIDE_REL
+
+
+def llm_provider_presets() -> dict[str, dict[str, str]]:
+    """供前端与文档展示的默认 base_url / 示例 model。"""
+    return {
+        "ollama": {
+            "base_url": "http://127.0.0.1:11434",
+            "model": "llama3.2",
+            "hint": "本地 Ollama；api_mode 可选 native 或 openai",
+        },
+        "minimax": {
+            "base_url": "https://api.minimax.chat/v1",
+            "model": "abab6.5s-chat",
+            "hint": "MiniMax OpenAI 兼容接口；需 api_key",
+        },
+        "deepseek": {
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-chat",
+            "hint": "DeepSeek；需 api_key",
+        },
+        "qwen": {
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-turbo",
+            "hint": "阿里云 DashScope 兼容模式；需 api_key（或 DASHSCOPE_API_KEY）",
+        },
+    }
 
 
 class AppConfig(BaseModel):
     title: str = _DEFAULT_APP_TITLE
     width: int = Field(default=960, ge=400, le=4096)
     height: int = Field(default=640, ge=300, le=4096)
+    # True 或环境变量 RUYI72_DEBUG=1 时控制台输出 LLM 请求/响应摘要（可能含对话片段）
+    debug: bool = False
 
 
 class LLMConfig(BaseModel):
-    provider: str = "ollama"
+    provider: LLMProvider = "ollama"
     base_url: str = "http://127.0.0.1:11434"
     model: str = "llama3.2"
     temperature: float = Field(default=0.6, ge=0.0, le=2.0)
@@ -30,6 +68,12 @@ class LLMConfig(BaseModel):
     api_mode: Literal["native", "openai"] = "native"
     # None=自动：本机 loopback 不走系统代理（避免 HTTP(S)_PROXY 导致 502）；true/false 可强制
     trust_env: bool | None = None
+
+    @model_validator(mode="after")
+    def _cloud_forces_openai_mode(self) -> LLMConfig:
+        if self.provider in ("minimax", "deepseek", "qwen") and self.api_mode != "openai":
+            return self.model_copy(update={"api_mode": "openai"})
+        return self
 
 
 class StorageConfig(BaseModel):
@@ -86,6 +130,16 @@ class TeamConfig(BaseModel):
     models: list[TeamModelEntry] = Field(default_factory=list)
 
 
+class MemoryAutoExtractConfig(BaseModel):
+    """闲时从会话历史自动抽取记忆（游标去重）；默认关闭以免消耗 token。"""
+
+    enabled: bool = False
+    interval_sec: int = Field(default=180, ge=30, le=86400)
+    max_chars_per_batch: int = Field(default=16000, ge=2000, le=200000)
+    min_chars_to_extract: int = Field(default=40, ge=0, le=5000)
+    max_sessions_scanned: int = Field(default=30, ge=1, le=500)
+
+
 class RuyiConfig(BaseModel):
     version: int = 1
     app: AppConfig = Field(default_factory=AppConfig)
@@ -94,6 +148,9 @@ class RuyiConfig(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
     team: TeamConfig = Field(default_factory=TeamConfig)
+    memory_auto_extract: MemoryAutoExtractConfig = Field(
+        default_factory=MemoryAutoExtractConfig
+    )
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -134,8 +191,8 @@ def load_config_file(path: Path) -> dict[str, Any]:
 
 def load_config() -> RuyiConfig:
     """
-    合并默认配置与首个命中的 YAML，经 Pydantic 校验。
-    team.models 中每条须含非空 model（见 TeamModelEntry）；校验失败抛出 ValidationError。
+    合并默认配置与首个命中的主 YAML，再合并 ~/.ruyi72/ruyi72.local.yaml（若存在）。
+    界面保存写入 local 文件，同名字段覆盖主配置。
     """
     merged: dict[str, Any] = _default_dict()
     for p in config_search_paths():
@@ -145,4 +202,34 @@ def load_config() -> RuyiConfig:
                 break
         except OSError:
             continue
+    local = local_override_config_path()
+    try:
+        if local.is_file():
+            merged = _deep_merge(merged, load_config_file(local))
+    except OSError:
+        pass
     return RuyiConfig.model_validate(merged)
+
+
+def save_llm_local_yaml(llm: LLMConfig) -> Path:
+    """将 llm 块写入 ~/.ruyi72/ruyi72.local.yaml（覆盖同文件中的 llm）。"""
+    path = local_override_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict[str, Any] = {}
+    try:
+        if path.is_file():
+            existing = load_config_file(path)
+            if not isinstance(existing, dict):
+                existing = {}
+    except OSError:
+        existing = {}
+    existing["version"] = existing.get("version") or 1
+    existing["llm"] = llm.model_dump(mode="json")
+    text = yaml.safe_dump(
+        existing,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+    )
+    path.write_text(text, encoding="utf-8")
+    return path

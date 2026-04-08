@@ -1305,11 +1305,62 @@ function setMemoryModalBusy(busy) {
   if (confirm) confirm.disabled = busy;
 }
 
+let llmProviderPresets = {};
+let llmClearApiKeyNextSave = false;
+
+function applyLlmPresetHint(provider) {
+  const el = document.getElementById("llm-preset-hint");
+  if (!el) return;
+  const p = llmProviderPresets[provider];
+  el.textContent = p && p.hint ? p.hint : "";
+}
+
+function toggleLlmOllamaOnly(isOllama) {
+  const wrap = document.getElementById("llm-api-mode-wrap");
+  if (wrap) wrap.classList.toggle("hidden", !isOllama);
+}
+
+function fillLlmFormFromSnapshot(s) {
+  const prov = document.getElementById("llm-provider");
+  if (prov) prov.value = s.provider || "ollama";
+  const bu = document.getElementById("llm-base-url");
+  if (bu) bu.value = s.base_url || "";
+  const mo = document.getElementById("llm-model");
+  if (mo) mo.value = s.model || "";
+  const te = document.getElementById("llm-temperature");
+  if (te) te.value = String(s.temperature != null ? s.temperature : 0.6);
+  const mt = document.getElementById("llm-max-tokens");
+  if (mt) mt.value = String(s.max_tokens != null ? s.max_tokens : 2048);
+  const am = document.getElementById("llm-api-mode");
+  if (am) am.value = s.api_mode || "native";
+  const trust = document.getElementById("llm-trust-env");
+  if (trust) {
+    const tc = s.trust_env_config;
+    trust.value =
+      tc === null || tc === undefined ? "" : tc === true ? "true" : "false";
+  }
+  const key = document.getElementById("llm-api-key");
+  if (key) {
+    key.value = "";
+    key.type = "password";
+  }
+  const vis = document.getElementById("llm-api-key-visible");
+  if (vis) vis.checked = false;
+  llmClearApiKeyNextSave = false;
+  toggleLlmOllamaOnly((s.provider || "ollama") === "ollama");
+  applyLlmPresetHint(s.provider || "ollama");
+}
+
 async function loadSettings() {
   const line = document.getElementById("settings-line");
   const hint = document.getElementById("storage-hint");
   try {
-    const s = await api().get_settings_snapshot();
+    const [s, defs] = await Promise.all([
+      api().get_settings_snapshot(),
+      api().get_llm_defaults(),
+    ]);
+    llmProviderPresets = (defs && defs.presets) || {};
+    fillLlmFormFromSnapshot(s);
     const auth =
       s.api_key_configured === true
         ? " · 已配置 API Key"
@@ -1318,7 +1369,9 @@ async function loadSettings() {
       s.trust_env === false
         ? " · 直连(不走系统代理)"
         : " · 使用系统代理环境变量";
-    line.textContent = `${s.provider} · ${s.api_mode} · ${s.model} · ${s.base_url}${auth}${te}`;
+    const temp =
+      s.temperature != null ? ` · temp ${s.temperature}` : "";
+    line.textContent = `${s.provider} · ${s.api_mode} · ${s.model} · ${s.base_url}${temp}${auth}${te}`;
     hint.textContent = s.sessions_root
       ? `历史目录: ${s.sessions_root}`
       : "";
@@ -1333,6 +1386,106 @@ async function loadSettings() {
     }
   } catch (e) {
     line.textContent = "无法读取配置：" + String(e);
+  }
+  await loadIdentityPrompts();
+}
+
+async function loadIdentityPrompts() {
+  const st = document.getElementById("identity-settings-status");
+  try {
+    const r = await api().get_identity_prompt_files();
+    if (!r.ok) {
+      if (st) st.textContent = r.error || "读取失败";
+      return;
+    }
+    const pu = document.getElementById("identity-path-user");
+    const ps = document.getElementById("identity-path-soul");
+    const pm = document.getElementById("identity-path-memory");
+    if (pu && r.paths) pu.textContent = r.paths.user || "";
+    if (ps && r.paths) ps.textContent = r.paths.soul || "";
+    if (pm && r.paths) pm.textContent = r.paths.memory || "";
+    const u = document.getElementById("identity-user");
+    const s = document.getElementById("identity-soul");
+    const m = document.getElementById("identity-memory");
+    if (u) u.value = r.user != null ? r.user : "";
+    if (s) s.value = r.soul != null ? r.soul : "";
+    if (m) m.value = r.memory != null ? r.memory : "";
+    const trunc =
+      r.user_truncated || r.soul_truncated || r.memory_truncated;
+    if (st) {
+      st.textContent = trunc
+        ? "部分内容超过约 256KB，已截断显示；完整内容请直接打开上述路径下的文件编辑。"
+        : "";
+    }
+  } catch (e) {
+    if (st) st.textContent = "读取身份提示词失败：" + String(e);
+  }
+}
+
+async function saveIdentityPromptsFromForm() {
+  const st = document.getElementById("identity-settings-status");
+  const payload = {
+    user: (document.getElementById("identity-user") || {}).value,
+    soul: (document.getElementById("identity-soul") || {}).value,
+    memory: (document.getElementById("identity-memory") || {}).value,
+  };
+  if (st) st.textContent = "保存中…";
+  try {
+    const r = await api().save_identity_prompt_files(payload);
+    if (!r.ok) {
+      if (st) st.textContent = "保存失败：" + (r.error || "");
+      return;
+    }
+    if (st) st.textContent = "已保存。";
+    await loadIdentityPrompts();
+  } catch (e) {
+    if (st) st.textContent = "保存异常：" + String(e);
+  }
+}
+
+async function saveLlmSettingsFromForm() {
+  const st = document.getElementById("llm-settings-status");
+  const provEl = document.getElementById("llm-provider");
+  const payload = {
+    provider: provEl ? provEl.value : "ollama",
+    base_url: (document.getElementById("llm-base-url") || {}).value.trim(),
+    model: (document.getElementById("llm-model") || {}).value.trim(),
+    temperature: parseFloat(
+      (document.getElementById("llm-temperature") || {}).value
+    ),
+    max_tokens: parseInt(
+      (document.getElementById("llm-max-tokens") || {}).value,
+      10
+    ),
+    api_mode: (document.getElementById("llm-api-mode") || {}).value,
+  };
+  if (Number.isNaN(payload.temperature)) payload.temperature = 0.6;
+  if (Number.isNaN(payload.max_tokens)) payload.max_tokens = 2048;
+  const trustSel = document.getElementById("llm-trust-env");
+  if (trustSel) {
+    const tv = trustSel.value;
+    if (tv === "") payload.trust_env = null;
+    else if (tv === "true") payload.trust_env = true;
+    else payload.trust_env = false;
+  }
+  const keyInp = document.getElementById("llm-api-key");
+  if (llmClearApiKeyNextSave) {
+    payload.api_key = "";
+    llmClearApiKeyNextSave = false;
+  } else if (keyInp && keyInp.value.trim()) {
+    payload.api_key = keyInp.value.trim();
+  }
+  if (st) st.textContent = "保存中…";
+  try {
+    const r = await api().save_llm_settings(payload);
+    if (!r.ok) {
+      if (st) st.textContent = "保存失败：" + (r.error || "");
+      return;
+    }
+    if (st) st.textContent = "已保存并应用。";
+    await loadSettings();
+  } catch (e) {
+    if (st) st.textContent = "保存异常：" + String(e);
   }
 }
 
@@ -1628,6 +1781,46 @@ function init() {
   const themeSelect = document.getElementById("theme-select");
   if (themeSelect) {
     themeSelect.addEventListener("change", () => applyTheme(themeSelect.value));
+  }
+
+  const llmProv = document.getElementById("llm-provider");
+  if (llmProv) {
+    llmProv.addEventListener("change", () => {
+      toggleLlmOllamaOnly(llmProv.value === "ollama");
+      applyLlmPresetHint(llmProv.value);
+    });
+  }
+  const llmKeyVis = document.getElementById("llm-api-key-visible");
+  const llmKeyInp = document.getElementById("llm-api-key");
+  if (llmKeyVis && llmKeyInp) {
+    llmKeyVis.addEventListener("change", () => {
+      llmKeyInp.type = llmKeyVis.checked ? "text" : "password";
+    });
+  }
+  const btnIdentityReload = document.getElementById("btn-identity-reload");
+  if (btnIdentityReload) {
+    btnIdentityReload.addEventListener("click", () => loadIdentityPrompts());
+  }
+  const btnIdentitySave = document.getElementById("btn-identity-save");
+  if (btnIdentitySave) {
+    btnIdentitySave.addEventListener("click", () => saveIdentityPromptsFromForm());
+  }
+
+  const btnLlmSave = document.getElementById("btn-llm-save");
+  if (btnLlmSave) {
+    btnLlmSave.addEventListener("click", () => {
+      void saveLlmSettingsFromForm();
+    });
+  }
+  const btnLlmClear = document.getElementById("btn-llm-clear-key");
+  if (btnLlmClear) {
+    btnLlmClear.addEventListener("click", () => {
+      llmClearApiKeyNextSave = true;
+      const st = document.getElementById("llm-settings-status");
+      if (st) {
+        st.textContent = "下次点击「保存并应用」时将清除已写入的 API Key。";
+      }
+    });
   }
 
   const sortEl = document.getElementById("session-sort");

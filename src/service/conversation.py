@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ from src.agent.persona_runtime import CHECKPOINT_NAME, PersonaRuntime
 from src.agent.react import run_react
 from src.agent.team_turn import run_team_turn
 from src.config import LLMConfig, PersonaConfig, RuyiConfig
+from src.debug_log import log_send_message_context
 from src.llm.ollama import OllamaClient, OllamaClientError
 from src.llm.knowledge_prompts import knowledge_base_system_hint
 from src.llm.prompts import action_card_system_hint, build_system_block
@@ -43,6 +46,28 @@ class ConversationService:
         self._memory_bootstrap_pending = False
         self._persona_emit: Any = None
         self._persona_rt: PersonaRuntime | None = None
+        self._llm_busy_depth = 0
+        self._llm_busy_lock = threading.Lock()
+
+    @contextmanager
+    def llm_busy(self):
+        """标记本进程正占用 LLM（对话 / ReAct / 记忆抽取等），供闲时记忆任务避让。"""
+        with self._llm_busy_lock:
+            self._llm_busy_depth += 1
+        try:
+            yield
+        finally:
+            with self._llm_busy_lock:
+                self._llm_busy_depth -= 1
+
+    def is_idle_for_auto_memory(self) -> bool:
+        with self._llm_busy_lock:
+            if self._llm_busy_depth > 0:
+                return False
+        pr = self._persona_rt
+        if pr is not None and pr.is_streaming():
+            return False
+        return True
 
     def set_persona_emit(self, fn: Any) -> None:
         """由 app.Api 注入：把拟人事件推到前端（如 pywebview evaluate_js）。"""
@@ -50,6 +75,11 @@ class ConversationService:
 
     def llm_config(self) -> LLMConfig:
         return self._llm
+
+    def update_llm_config(self, llm: LLMConfig) -> None:
+        """界面保存后更新内存中的 LLM 配置（与 ruyi72.local.yaml 一致）。"""
+        self._cfg = self._cfg.model_copy(update={"llm": llm})
+        self._llm = llm
 
     def persona_config(self) -> PersonaConfig:
         return self._cfg.persona
@@ -484,7 +514,11 @@ class ConversationService:
         ]
         call_messages.extend(self.messages_for_llm())
         try:
-            reply = OllamaClient(self._llm).chat(call_messages)
+            with self.llm_busy():
+                reply = OllamaClient(self._llm).chat(
+                    call_messages,
+                    caller="ConversationService._chat_style_followup_after_card",
+                )
         except OllamaClientError as e:
             return str(e)
         visible, card = split_reply_action_card(reply)
@@ -530,13 +564,14 @@ class ConversationService:
                 if ts > m_count:
                     return f"team.models 仅 {m_count} 条，无法继续团队编排。"
                 try:
-                    reply = run_team_turn(
-                        self._cfg,
-                        team_size=ts,
-                        prior_messages=list(self._messages[:-1]),
-                        user_text=user_text,
-                        memory_extra=memory_extra or None,
-                    )
+                    with self.llm_busy():
+                        reply = run_team_turn(
+                            self._cfg,
+                            team_size=ts,
+                            prior_messages=list(self._messages[:-1]),
+                            user_text=user_text,
+                            memory_extra=memory_extra or None,
+                        )
                 except ValueError as e:
                     self._messages.append({"role": "assistant", "content": str(e)})
                 except OllamaClientError as e:
@@ -550,14 +585,15 @@ class ConversationService:
                 root = Path(ws).expanduser().resolve()
                 if not root.is_dir():
                     return f"工作区不存在或不是目录: {root}"
-                ok, _out = run_react(
-                    self._llm,
-                    self._messages,
-                    workspace=str(root),
-                    max_steps=self._meta.react_max_steps,
-                    memory_bootstrap=memory_extra or None,
-                    extra_system=self._kb_system_extra(),
-                )
+                with self.llm_busy():
+                    ok, _out = run_react(
+                        self._llm,
+                        self._messages,
+                        workspace=str(root),
+                        max_steps=self._meta.react_max_steps,
+                        memory_bootstrap=memory_extra or None,
+                        extra_system=self._kb_system_extra(),
+                    )
                 if ok:
                     self._parse_action_card_on_last_assistant(self._messages)
             else:
@@ -689,6 +725,14 @@ class ConversationService:
         if not text:
             return False, "请输入内容。", True
 
+        sv = getattr(self._meta, "session_variant", None)
+        log_send_message_context(
+            "ConversationService.send_message",
+            mode=str(self._meta.mode),
+            session_variant=str(sv) if sv else "",
+            workspace_set=bool((self._meta.workspace or "").strip()),
+        )
+
         if self._meta.mode == "persona" and self._meta.session_variant == "standard":
             r = self.persona_send(text)
             if r.get("sync"):
@@ -727,13 +771,14 @@ class ConversationService:
                 )
             self._messages.append({"role": "user", "content": text})
             try:
-                reply = run_team_turn(
-                    self._cfg,
-                    team_size=ts,
-                    prior_messages=list(self._messages[:-1]),
-                    user_text=text,
-                    memory_extra=memory_extra or None,
-                )
+                with self.llm_busy():
+                    reply = run_team_turn(
+                        self._cfg,
+                        team_size=ts,
+                        prior_messages=list(self._messages[:-1]),
+                        user_text=text,
+                        memory_extra=memory_extra or None,
+                    )
             except ValueError as e:
                 self._messages.pop()
                 return False, str(e), True
@@ -765,7 +810,11 @@ class ConversationService:
             call_messages.append({"role": "user", "content": text})
 
             try:
-                reply = OllamaClient(self._llm).chat(call_messages)
+                with self.llm_busy():
+                    reply = OllamaClient(self._llm).chat(
+                        call_messages,
+                        caller="ConversationService.send_message.chat",
+                    )
             except OllamaClientError as e:
                 return False, str(e), True
 
@@ -791,14 +840,15 @@ class ConversationService:
 
         # ReAct 模式：历史中先追加用户消息，后续由 run_react 修改 messages 列表。
         self._messages.append({"role": "user", "content": text})
-        ok, out = run_react(
-            self._llm,
-            self._messages,
-            workspace=str(root),
-            max_steps=self._meta.react_max_steps,
-            memory_bootstrap=memory_extra or None,
-            extra_system=self._kb_system_extra(),
-        )
+        with self.llm_busy():
+            ok, out = run_react(
+                self._llm,
+                self._messages,
+                workspace=str(root),
+                max_steps=self._meta.react_max_steps,
+                memory_bootstrap=memory_extra or None,
+                extra_system=self._kb_system_extra(),
+            )
         if ok:
             self._parse_action_card_on_last_assistant(self._messages)
         self._store.save_messages(self._active_id, self._messages)

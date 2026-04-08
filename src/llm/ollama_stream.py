@@ -9,7 +9,14 @@ from typing import Any
 import httpx
 
 from src.config import LLMConfig
-from src.llm.ollama import OllamaClientError, effective_trust_env, resolve_llm_api_key
+from src.debug_log import log_llm_request, log_llm_response, log_llm_stream_done
+from src.llm.ollama import (
+    OllamaClientError,
+    effective_trust_env,
+    is_openai_cloud,
+    openai_compatible_chat_completions_url,
+    resolve_llm_api_key,
+)
 
 
 def _base_prefix(cfg: LLMConfig) -> str:
@@ -24,17 +31,15 @@ def stream_chat(
     cancel_check: Callable[[], bool],
     model_override: str | None = None,
     think: bool = False,
+    caller: str = "stream_chat",
 ) -> tuple[str, str]:
     """
     流式请求；on_delta(channel, text)，channel 为 \"content\" 或 \"thinking\"。
     返回累积的 (content, thinking)。
     """
-    if cfg.provider != "ollama":
-        raise OllamaClientError(f"当前仅支持 provider=ollama，收到: {cfg.provider!r}")
-
     model_name = (model_override or "").strip() or cfg.model
-    headers: dict[str, str] = {}
     key = resolve_llm_api_key(cfg)
+    headers: dict[str, str] = {}
     if key:
         headers["Authorization"] = f"Bearer {key}"
 
@@ -43,9 +48,22 @@ def stream_chat(
     content_acc: list[str] = []
     thinking_acc: list[str] = []
 
-    if cfg.api_mode == "openai":
+    if is_openai_cloud(cfg):
+        if not key:
+            raise OllamaClientError(
+                "当前提供商需要 API Key。请在设置中填写 llm.api_key，或设置对应环境变量。"
+            )
+        url = openai_compatible_chat_completions_url(cfg)
+        body = {
+            "model": model_name,
+            "messages": messages,
+            "stream": True,
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+        }
+    elif cfg.api_mode == "openai":
         url = base + "v1/chat/completions"
-        body: dict[str, Any] = {
+        body = {
             "model": model_name,
             "messages": messages,
             "stream": True,
@@ -65,6 +83,15 @@ def stream_chat(
             },
         }
 
+    log_llm_request(
+        caller,
+        url=url,
+        provider=cfg.provider,
+        model=model_name,
+        messages=messages,
+        body=body,
+        headers=headers,
+    )
     try:
         with httpx.Client(
             timeout=httpx.Timeout(120.0, connect=10.0),
@@ -73,21 +100,37 @@ def stream_chat(
             with client.stream("POST", url, json=body, headers=headers) as r:
                 if r.status_code >= 400:
                     raw = "".join(r.iter_text())[:800]
-                    raise OllamaClientError(
-                        f"流式请求失败 HTTP {r.status_code}（POST {url}）。{raw}"
+                    err = f"流式请求失败 HTTP {r.status_code}（POST {url}）。{raw}"
+                    log_llm_response(
+                        caller, error=err, http_status=r.status_code
                     )
-                if cfg.api_mode == "openai":
+                    raise OllamaClientError(err)
+                if is_openai_cloud(cfg) or cfg.api_mode == "openai":
                     _consume_openai_stream(r, on_delta, cancel_check, content_acc, thinking_acc)
                 else:
                     _consume_native_stream(r, on_delta, cancel_check, content_acc, thinking_acc)
     except httpx.ConnectError as e:
+        log_llm_response(caller, error=f"ConnectError: {e!s}")
         raise OllamaClientError(
             "无法连接到 Ollama。请确认服务已启动且 base_url 正确。" f" ({e!s})"
         ) from e
     except httpx.TimeoutException as e:
+        log_llm_response(caller, error=f"Timeout: {e!s}")
         raise OllamaClientError(f"流式请求超时。 ({e!s})") from e
 
-    return "".join(content_acc), "".join(thinking_acc)
+    content_s = "".join(content_acc)
+    thinking_s = "".join(thinking_acc)
+    log_llm_stream_done(
+        caller,
+        url=url,
+        provider=cfg.provider,
+        model=model_name,
+        content_len=len(content_s),
+        thinking_len=len(thinking_s),
+        content_preview=content_s,
+        thinking_preview=thinking_s,
+    )
+    return content_s, thinking_s
 
 
 def _consume_native_stream(

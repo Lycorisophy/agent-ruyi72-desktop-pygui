@@ -6,7 +6,7 @@ from __future__ import annotations
 - 用户画像
 - 安全与注意事项
 
-第一版写死在代码中，不支持外部替换。
+~/.ruyi72/SOUL.md、USER.md 可分别覆盖人格与用户画像；MEMORY.md 可选追加核心记忆段。
 """
 
 AGENT_PROMPT = """
@@ -79,13 +79,21 @@ def action_card_system_hint() -> str:
 
 def build_system_block(extra_system: str | None = None) -> str:
     """
-    组合三段固定提示词 + 可选额外系统提示（例如技能列表、ReAct 工作区说明）。
+    组合人格 / 用户画像 / 可选核心记忆 / 安全段 + 可选额外系统提示（技能、ReAct、团队槽位等）。
 
     返回一个大的 system prompt 文本，供：
     - Ollama 聊天：作为单条 system 消息；
     - LangChain create_agent：作为 system_prompt 传入。
     """
-    parts: list[str] = [AGENT_PROMPT, USER_PROFILE_PROMPT, SAFETY_PROMPT]
+    from src.llm.ruyi72_identity_files import read_soul_user_memory
+
+    soul_o, user_o, memory_o = read_soul_user_memory()
+    agent = soul_o if soul_o else AGENT_PROMPT
+    profile = user_o if user_o else USER_PROFILE_PROMPT
+    parts: list[str] = [agent, profile]
+    if memory_o:
+        parts.append("【用户编辑的核心记忆】\n" + memory_o.strip())
+    parts.append(SAFETY_PROMPT)
     if extra_system:
         parts.append(extra_system.strip())
     return "\n\n".join(parts)

@@ -196,7 +196,11 @@ def run_team_turn(
             ]
 
         def call_llm(msgs: list[dict[str, str]]) -> str:
-            return client.chat(msgs, model_override=model_name)
+            return client.chat(
+                msgs,
+                model_override=model_name,
+                caller="team_turn.run_team_turn",
+            )
 
         reply = call_llm(call)
         last_reply = reply

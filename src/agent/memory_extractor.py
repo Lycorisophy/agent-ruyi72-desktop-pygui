@@ -78,7 +78,10 @@ def extract_and_store_from_text(llm_cfg: LLMConfig, text: str) -> dict[str, int]
     ]
 
     try:
-        reply = client.chat(messages)
+        reply = client.chat(
+            messages,
+            caller="memory_extractor.extract_and_store_from_text",
+        )
     except OllamaClientError as e:
         # 记忆抽取失败时，不抛异常到前端，只计为 0 并在消息中展示错误由上层处理。
         return {"facts": 0, "events": 0, "relations": 0, "error": str(e)}

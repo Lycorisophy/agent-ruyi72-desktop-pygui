@@ -84,6 +84,95 @@
         </label>
       </div>
       <p id="settings-line" class="settings"></p>
+      <details class="settings-details" id="llm-settings-details">
+        <summary class="settings-summary">模型与 API 设置</summary>
+        <div class="settings-form-grid">
+          <label>
+            <span>提供商</span>
+            <select id="llm-provider" class="field-input" aria-label="LLM 提供商">
+              <option value="ollama">Ollama（本地）</option>
+              <option value="minimax">MiniMax</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="qwen">通义千问（DashScope 兼容）</option>
+            </select>
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input type="text" id="llm-base-url" class="field-input" autocomplete="off" />
+          </label>
+          <label>
+            <span>模型名</span>
+            <input type="text" id="llm-model" class="field-input" autocomplete="off" />
+          </label>
+          <label>
+            <span>API Key（可选覆盖配置文件）</span>
+            <input type="password" id="llm-api-key" class="field-input" autocomplete="off" placeholder="留空则不修改已保存的 Key" />
+          </label>
+          <label class="field-row">
+            <input type="checkbox" id="llm-api-key-visible" />
+            <span>显示 API Key</span>
+          </label>
+          <label>
+            <span>温度</span>
+            <input type="number" id="llm-temperature" class="field-input narrow" min="0" max="2" step="0.1" />
+          </label>
+          <label>
+            <span>最大 tokens</span>
+            <input type="number" id="llm-max-tokens" class="field-input narrow" min="1" max="262144" step="1" />
+          </label>
+          <div id="llm-api-mode-wrap">
+            <label>
+              <span>Ollama API 模式</span>
+              <select id="llm-api-mode" class="field-input" aria-label="Ollama API 模式">
+                <option value="native">native（/api/chat）</option>
+                <option value="openai">openai（/v1/chat/completions）</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>HTTP 代理（trust_env）</span>
+            <select id="llm-trust-env" class="field-input" aria-label="是否使用系统代理">
+              <option value="">自动（本机 loopback 默认不走代理）</option>
+              <option value="false">否（直连）</option>
+              <option value="true">是（使用系统代理环境变量）</option>
+            </select>
+          </label>
+          <p id="llm-preset-hint" class="settings-hint" aria-live="polite"></p>
+          <div class="settings-form-actions">
+            <button type="button" id="btn-llm-save" class="btn btn-small">保存并应用</button>
+            <button type="button" id="btn-llm-clear-key" class="btn btn-small btn-ghost">清除已保存的 API Key</button>
+          </div>
+          <p id="llm-settings-status" class="settings-hint" role="status"></p>
+        </div>
+      </details>
+      <details class="settings-details" id="identity-prompt-details">
+        <summary class="settings-summary">身份与记忆提示词</summary>
+        <p class="settings-hint">
+          可在用户目录 <code>.ruyi72</code> 下使用 <code>SOUL.md</code>（智能体性格）、<code>USER.md</code>（用户身份）、<code>MEMORY.md</code>（核心记忆）覆盖默认系统提示；亦可在此编辑保存。留空则人格与画像用内置默认，MEMORY 不写入。
+        </p>
+        <div class="settings-form-grid identity-prompt-grid">
+          <label>
+            <span>SOUL.md — 智能体灵魂 / 性格</span>
+            <span id="identity-path-soul" class="identity-path" aria-label="SOUL 文件路径"></span>
+            <textarea id="identity-soul" class="field-input identity-textarea" rows="7" spellcheck="false" aria-label="SOUL.md 内容"></textarea>
+          </label>
+          <label>
+            <span>USER.md — 用户身份 / 画像</span>
+            <span id="identity-path-user" class="identity-path" aria-label="USER 文件路径"></span>
+            <textarea id="identity-user" class="field-input identity-textarea" rows="7" spellcheck="false" aria-label="USER.md 内容"></textarea>
+          </label>
+          <label>
+            <span>MEMORY.md — 核心记忆</span>
+            <span id="identity-path-memory" class="identity-path" aria-label="MEMORY 文件路径"></span>
+            <textarea id="identity-memory" class="field-input identity-textarea" rows="7" spellcheck="false" aria-label="MEMORY.md 内容"></textarea>
+          </label>
+        </div>
+        <div class="settings-form-actions">
+          <button type="button" id="btn-identity-reload" class="btn btn-small btn-ghost">重新加载</button>
+          <button type="button" id="btn-identity-save" class="btn btn-small">保存到文件</button>
+        </div>
+        <p id="identity-settings-status" class="settings-hint" role="status"></p>
+      </details>
     </header>
     <section class="session-bar">
       <label class="field">

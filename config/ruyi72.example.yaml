@@ -7,19 +7,37 @@ app:
   title: 如意72
   width: 960
   height: 640
+  # true 时（或环境变量 RUYI72_DEBUG=1）控制台输出 LLM 请求/响应摘要；可能含对话片段，勿在公共环境开启
+  # debug: false
 
 llm:
+  # ollama | minimax | deepseek | qwen（后三者仅 OpenAI 兼容接口，需 api_key，见下方注释）
   provider: ollama
   base_url: http://127.0.0.1:11434
   model: qwen3.5:35b-a3b-q8_0-nothink
   temperature: 0.6
   max_tokens: 131072
-  # native: /api/chat；openai: /v1/chat/completions（部分网关只转发 /v1）
+  # native: /api/chat；openai: /v1/chat/completions（部分网关只转发 /v1）。云端 provider 会强制为 openai 模式。
   api_mode: openai
   # 本机 loopback 默认不走系统代理；仍 HTTP 502 时可显式设为 false
   # trust_env: false
   # 本地默认可不填。远程 / Ollama Cloud / 需鉴权的反代：填写令牌，或设 OLLAMA_API_KEY
   # api_key: ""
+  # 示例（勿与 ollama 同时生效；仅作参考）:
+  # provider: deepseek
+  # base_url: https://api.deepseek.com
+  # model: deepseek-chat
+  # api_key: "sk-..."
+  # provider: qwen
+  # base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # model: qwen-turbo
+  # api_key: "sk-..."   # 或环境变量 DASHSCOPE_API_KEY
+  # provider: minimax
+  # base_url: https://api.minimax.chat/v1
+  # model: abab6.5s-chat
+  # api_key: "..."
+
+# 界面「保存并应用」写入 %USERPROFILE%\.ruyi72\ruyi72.local.yaml，仅 llm 块；会覆盖主配置中同名 llm 字段。
 
 # 会话历史根目录；留空则为 %USERPROFILE%\.ruyi72\sessions\<sessionId>\
 storage:
@@ -35,3 +53,11 @@ persona:
   proactive_enabled: false
   proactive_idle_seconds: 120
   proactive_max_per_day: 5
+
+# 闲时自动从会话历史抽取记忆（默认关闭；游标见 ~/.ruyi72/memory_auto_extract_state.json）
+# memory_auto_extract:
+#   enabled: false
+#   interval_sec: 180
+#   max_chars_per_batch: 16000
+#   min_chars_to_extract: 40
+#   max_sessions_scanned: 30

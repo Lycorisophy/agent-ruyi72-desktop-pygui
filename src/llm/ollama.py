@@ -10,13 +10,54 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from src.config import LLMConfig
+from src.debug_log import log_llm_request, log_llm_response
+
+
+def _messages_from_body(body: dict[str, Any]) -> list[dict[str, str]]:
+    raw = body.get("messages")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for m in raw:
+        if isinstance(m, dict):
+            out.append(
+                {
+                    "role": str(m.get("role") or ""),
+                    "content": str(m.get("content") or ""),
+                }
+            )
+    return out
+
+
+def is_openai_cloud(cfg: LLMConfig) -> bool:
+    return cfg.provider in ("minimax", "deepseek", "qwen")
+
+
+def openai_compatible_chat_completions_url(cfg: LLMConfig) -> str:
+    """OpenAI 兼容 POST …/chat/completions 的完整 URL。"""
+    b = cfg.base_url.rstrip("/")
+    if b.endswith("/v1"):
+        return b + "/chat/completions"
+    return b + "/v1/chat/completions"
 
 
 def resolve_llm_api_key(cfg: LLMConfig) -> str | None:
-    """配置文件 api_key 优先，否则读环境变量 OLLAMA_API_KEY / RUYI72_OLLAMA_API_KEY。"""
+    """配置文件 api_key 优先，否则按 provider 读常见环境变量。"""
     if cfg.api_key and str(cfg.api_key).strip():
         return str(cfg.api_key).strip()
-    for name in ("OLLAMA_API_KEY", "RUYI72_OLLAMA_API_KEY"):
+    p = cfg.provider
+    env_lists: tuple[str, ...]
+    if p == "ollama":
+        env_lists = ("OLLAMA_API_KEY", "RUYI72_OLLAMA_API_KEY")
+    elif p == "minimax":
+        env_lists = ("MINIMAX_API_KEY", "RUYI72_MINIMAX_API_KEY")
+    elif p == "deepseek":
+        env_lists = ("DEEPSEEK_API_KEY", "RUYI72_DEEPSEEK_API_KEY")
+    elif p == "qwen":
+        env_lists = ("DASHSCOPE_API_KEY", "QWEN_API_KEY", "RUYI72_DASHSCOPE_API_KEY")
+    else:
+        env_lists = ()
+    for name in env_lists:
         v = os.environ.get(name, "").strip()
         if v:
             return v
@@ -55,19 +96,41 @@ class OllamaClient:
             return self._openai_chat_url
         return self._native_chat_url
 
-    def chat(self, messages: list[dict[str, str]], *, model_override: str | None = None) -> str:
-        if self._cfg.provider != "ollama":
-            raise OllamaClientError(f"当前仅支持 provider=ollama，收到: {self._cfg.provider}")
-
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model_override: str | None = None,
+        caller: str = "OllamaClient.chat",
+    ) -> str:
         model_name = (model_override or "").strip() or self._cfg.model
-
-        headers: dict[str, str] = {}
         key = resolve_llm_api_key(self._cfg)
+        trust = effective_trust_env(self._cfg)
+
+        if is_openai_cloud(self._cfg):
+            if not key:
+                raise OllamaClientError(
+                    "当前提供商需要 API Key。请在设置中填写 llm.api_key，或设置对应环境变量。"
+                )
+            chat_url = openai_compatible_chat_completions_url(self._cfg)
+            headers: dict[str, str] = {"Authorization": f"Bearer {key}"}
+            body: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "stream": False,
+                "temperature": self._cfg.temperature,
+                "max_tokens": self._cfg.max_tokens,
+            }
+            return self._post_chat_json(chat_url, headers, body, trust, caller)
+
+        if self._cfg.provider != "ollama":
+            raise OllamaClientError(f"未知 llm.provider: {self._cfg.provider!r}")
+
+        headers = {}
         if key:
             headers["Authorization"] = f"Bearer {key}"
 
         chat_url = self._request_chat_url()
-        trust = effective_trust_env(self._cfg)
 
         if self._cfg.api_mode == "openai":
             body: dict[str, Any] = {
@@ -90,6 +153,27 @@ class OllamaClient:
                 },
             }
 
+        return self._post_chat_json(chat_url, headers, body, trust, caller)
+
+    def _post_chat_json(
+        self,
+        chat_url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+        trust: bool,
+        caller: str,
+    ) -> str:
+        model_name = str(body.get("model") or self._cfg.model)
+        msgs = _messages_from_body(body)
+        log_llm_request(
+            caller,
+            url=chat_url,
+            provider=self._cfg.provider,
+            model=model_name,
+            messages=msgs,
+            body=body,
+            headers=headers,
+        )
         try:
             with httpx.Client(
                 timeout=httpx.Timeout(120.0, connect=10.0),
@@ -97,19 +181,24 @@ class OllamaClient:
             ) as client:
                 r = client.post(chat_url, json=body, headers=headers)
         except httpx.ConnectError as e:
+            log_llm_response(caller, error=f"ConnectError: {e!s}")
             raise OllamaClientError(
-                "无法连接到 Ollama。请确认 Ollama 已启动，且配置中的 base_url 正确。"
+                "无法连接到语言模型服务。请确认 base_url 正确且网络可达。"
                 f" ({e!s})"
             ) from e
         except httpx.TimeoutException as e:
+            log_llm_response(caller, error=f"Timeout: {e!s}")
             raise OllamaClientError(f"请求超时，请稍后重试或检查模型是否过大。 ({e!s})") from e
 
         if r.status_code == 404:
-            raise OllamaClientError(
-                f"未找到接口或模型（HTTP 404）。请求: POST {chat_url}。"
-                f" 若使用网关，可尝试将 llm.api_mode 设为 openai（/v1/chat/completions）。"
-                f" 并确认已 `ollama pull {self._cfg.model}`。"
-            )
+            hint404 = f"未找到接口或模型（HTTP 404）。请求: POST {chat_url}。"
+            if not is_openai_cloud(self._cfg):
+                hint404 += (
+                    " 若使用网关，可尝试将 llm.api_mode 设为 openai（/v1/chat/completions）。"
+                    f" 并确认已 `ollama pull {self._cfg.model}`。"
+                )
+            log_llm_response(caller, error=hint404, http_status=404)
+            raise OllamaClientError(hint404)
         if r.status_code == 502:
             detail = (r.text or "")[:500]
             hint = (
@@ -119,31 +208,48 @@ class OllamaClient:
                 "2) 反代只转发 /v1——尝试 `llm.api_mode: openai`；"
                 "3) 上游 Ollama 未启动或地址错误。"
             )
-            if key:
-                hint += " 若服务端要求鉴权，请确认 api_key / OLLAMA_API_KEY 正确。"
-            raise OllamaClientError(hint + (f"\n详情: {detail}" if detail else ""))
+            if resolve_llm_api_key(self._cfg):
+                hint += " 若服务端要求鉴权，请确认 api_key 或对应环境变量正确。"
+            err = hint + (f"\n详情: {detail}" if detail else "")
+            log_llm_response(caller, error=err, http_status=502)
+            raise OllamaClientError(err)
         if r.status_code == 401 or r.status_code == 403:
             detail = (r.text or "")[:500]
-            raise OllamaClientError(
+            err = (
                 f"鉴权失败（HTTP {r.status_code}）。请检查 llm.api_key 或 OLLAMA_API_KEY 是否正确。"
                 + (f" 详情: {detail}" if detail else "")
             )
+            log_llm_response(caller, error=err, http_status=r.status_code)
+            raise OllamaClientError(err)
         if r.status_code >= 400:
             detail = (r.text or "")[:500]
-            raise OllamaClientError(
+            err = (
                 f"Ollama 返回错误 HTTP {r.status_code}（POST {chat_url}）。"
                 + (f" 详情: {detail}" if detail else "")
             )
+            log_llm_response(caller, error=err, http_status=r.status_code)
+            raise OllamaClientError(err)
 
         try:
             data = r.json()
         except json.JSONDecodeError as e:
+            log_llm_response(
+                caller,
+                error=f"JSON 解析失败: {e!s}",
+                http_status=r.status_code,
+            )
             raise OllamaClientError(f"无法解析 Ollama 响应 JSON。 ({e!s})") from e
 
-        if self._cfg.api_mode == "openai":
-            return self._parse_openai_response(data, r.text)
-
-        return self._parse_native_response(data, r.text)
+        try:
+            if is_openai_cloud(self._cfg) or self._cfg.api_mode == "openai":
+                text = self._parse_openai_response(data, r.text)
+            else:
+                text = self._parse_native_response(data, r.text)
+        except OllamaClientError as err:
+            log_llm_response(caller, error=str(err), http_status=r.status_code)
+            raise
+        log_llm_response(caller, text=text, http_status=r.status_code)
+        return text
 
     def _parse_native_response(self, data: Any, raw: str) -> str:
         msg = data.get("message") if isinstance(data, dict) else None
@@ -175,4 +281,4 @@ class OllamaClient:
 
 
 def ollama_chat(cfg: LLMConfig, messages: list[dict[str, str]]) -> str:
-    return OllamaClient(cfg).chat(messages)
+    return OllamaClient(cfg).chat(messages, caller="ollama_chat")

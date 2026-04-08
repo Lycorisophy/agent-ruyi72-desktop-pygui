@@ -92,6 +92,10 @@ class PersonaRuntime:
         self._last_user_mono = time.monotonic()
         self._schedule_proactive()
 
+    def is_streaming(self) -> bool:
+        """是否处于拟人主对话流式生成中（用于闲时记忆任务避让）。"""
+        return self._streaming
+
     def _checkpoint_path(self) -> Path | None:
         sid = self._svc.active_session_id()
         if not sid:
@@ -174,7 +178,11 @@ class PersonaRuntime:
             return
         try:
             msg = self._svc.build_proactive_nudge_message()
-            reply = OllamaClient(self._svc.llm_config()).chat(msg)
+            with self._svc.llm_busy():
+                reply = OllamaClient(self._svc.llm_config()).chat(
+                    msg,
+                    caller="persona_runtime.proactive_nudge",
+                )
             line = (reply or "").strip()
             if not line:
                 return
@@ -285,6 +293,7 @@ class PersonaRuntime:
                     on_delta=on_delta,
                     cancel_check=lambda: self._cancel.is_set(),
                     think=think,
+                    caller="persona_runtime._run_turn",
                 )
             except OllamaClientError as e:
                 self._flush_deltas(force=True)
