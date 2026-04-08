@@ -40,11 +40,33 @@ pip install -r requirements.txt
 
 4. **会话与历史目录（可选）**：默认将每个会话保存到 `%USERPROFILE%\.ruyi72\sessions\<sessionId>\`（含 `meta.json` 与 `messages.json`）。可在配置中设置 `storage.sessions_root` 指向自定义根目录。
 
+## 功能概览
+
+- **标准对话（Chat）**：多轮问答，不自动执行工具；可选 **交互确认卡片**（`action_card`），用户确认后可触发后续回复。
+- **ReAct**：**LangChain** `create_agent`（底层 **LangGraph**），工具限于工作区内的 `read_file` / `list_dir` / `run_shell`，并可加载技能、浏览/检索记忆；步数受「最大步数」限制。
+- **拟人模式**：流式输出、可打断/暂停；与团队、知识库会话互斥（见界面与会话类型）。
+- **团队会话**：多模型链式委派，槽位与约束见 [docs/agent-team-mode.md](docs/agent-team-mode.md)。
+- **知识库会话**：将工作区视为知识库根目录，按预设侧重（收录、摘要、问答等）注入系统提示。
+- **工作区**：非团队路径下多数模式需有效目录；工具与目录预览均校验路径，禁止越界访问。
+- **记忆**：跨会话结构化存储与检索；详情见 [docs/memory-system.md](docs/memory-system.md)。
+- **界面**：会话列表与全文搜索、主题色、右侧任务上下文与技能列表、提示词模板条、分屏下列出工作区目录元信息（`list_workspace_preview`）等。
+
+模块职责、数据流与文件索引见 **[docs/module-design.md](docs/module-design.md)**。
+
 ## 界面说明
 
 - 左侧可**新建 / 切换会话**；每个会话可设置**工作区**（本地文件夹路径），对话与 ReAct 均仅允许访问该目录内的文件（工具会校验路径）。
 - **对话**：仅多轮问答，不执行工具。
 - **ReAct**：使用 **LangChain** `create_agent`（底层 **LangGraph**），默认 **ChatOllama** 与 `llm` 配置一致；工具为 `read_file` / `list_dir` / `run_shell`（工作区内）。递归深度与「最大步数」相关，达到上限会停止。
+
+## 文档
+
+设计与模块边界说明集中在 [docs/](docs/)：
+
+- **索引**：[docs/README.md](docs/README.md)
+- **模块设计总览**：[docs/module-design.md](docs/module-design.md)
+- **团队模式**：[docs/agent-team-mode.md](docs/agent-team-mode.md)
+- **记忆系统**：[docs/memory-system.md](docs/memory-system.md)
 
 ## 运行
 
@@ -62,14 +84,40 @@ python app.py
 agent-ruyi72-desktop-pygui/
 ├── app.py
 ├── requirements.txt
-├── config/ruyi72.example.yaml
+├── config/
+│   └── ruyi72.example.yaml
+├── docs/
+│   ├── README.md
+│   ├── module-design.md
+│   ├── agent-team-mode.md
+│   └── memory-system.md
+├── resources/
+│   └── knowledge_base/          # 知识库会话通用与预设提示片段
+├── skills/                      # 根目录技能（SKILL.md）
 ├── src/
 │   ├── config.py
-│   ├── llm/ollama.py
-│   ├── storage/session_store.py
-│   ├── service/conversation.py
-│   ├── llm/chat_model.py
-│   └── agent/ (react_lc.py, tools.py)
+│   ├── service/
+│   │   └── conversation.py      # 对话编排与 Api 业务核心
+│   ├── storage/
+│   │   ├── session_store.py
+│   │   └── memory_store.py
+│   ├── llm/
+│   │   ├── ollama.py
+│   │   ├── ollama_stream.py
+│   │   ├── chat_model.py
+│   │   ├── prompts.py
+│   │   └── knowledge_prompts.py
+│   ├── agent/
+│   │   ├── react_lc.py
+│   │   ├── react.py
+│   │   ├── tools.py
+│   │   ├── action_card.py
+│   │   ├── persona_runtime.py
+│   │   ├── team_turn.py
+│   │   ├── memory_extractor.py
+│   │   └── memory_tools.py
+│   └── skills/
+│       └── loader.py
 └── web/
     ├── index.html
     ├── style.css
