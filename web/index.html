@@ -34,6 +34,18 @@
         </select>
       </label>
     </div>
+    <div id="sidebar-search" class="sidebar-search">
+      <input
+        type="search"
+        id="session-search-input"
+        class="session-search-input"
+        placeholder="搜索会话全文…"
+        aria-label="搜索会话全文"
+        autocomplete="off"
+      />
+      <p id="session-search-empty" class="session-search-empty hidden" aria-live="polite">无匹配结果</p>
+    </div>
+    <ul id="session-search-results" class="session-list session-search-results hidden"></ul>
     <ul id="session-list" class="session-list"></ul>
     <p id="storage-hint" class="storage-hint"></p>
     <div class="sidebar-footer">

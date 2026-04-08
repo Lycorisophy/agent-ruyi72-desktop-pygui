@@ -13,6 +13,12 @@ ACTION_CARD_FENCE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# 兼容 <action_card> ... </action_card> 包裹的 JSON（与 fenced 块二选一，优先解析前者若同时存在）
+ACTION_CARD_XML = re.compile(
+    r"<action_card>\s*(.*?)\s*</action_card>",
+    re.IGNORECASE | re.DOTALL,
+)
+
 _CARD_STATUSES = frozenset(
     {"pending", "confirmed", "rejected", "expired", "superseded"}
 )
@@ -61,25 +67,53 @@ def build_pending_card_from_llm_payload(data: dict[str, Any]) -> dict[str, Any] 
 
 def split_reply_action_card(raw: str) -> tuple[str, dict[str, Any] | None]:
     """
-    从 assistant 原文中移除 ```action_card``` 块，并解析 JSON。
+    从 assistant 原文中解析卡片并剥离包裹层：
+    1) Markdown ```action_card ... ```（优先）
+    2) XML 风格 <action_card>...</action_card>
     返回 (可见正文, 卡片或 None)。
     """
-    m = ACTION_CARD_FENCE.search(raw)
-    if not m:
-        return raw.strip(), None
-    inner = m.group(1).strip()
-    try:
-        data = json.loads(inner)
-    except json.JSONDecodeError:
-        return raw.strip(), None
-    if not isinstance(data, dict):
-        return raw.strip(), None
-    ver = data.get("v", 1)
-    if ver != 1:
-        return raw.strip(), None
-    card = build_pending_card_from_llm_payload(data)
-    visible = ACTION_CARD_FENCE.sub("", raw).strip()
-    return visible, card
+
+    def _consume_fence(text: str) -> tuple[str, dict[str, Any] | None] | None:
+        m = ACTION_CARD_FENCE.search(text)
+        if not m:
+            return None
+        inner = m.group(1).strip()
+        try:
+            data = json.loads(inner)
+        except json.JSONDecodeError:
+            return raw.strip(), None
+        if not isinstance(data, dict):
+            return raw.strip(), None
+        if data.get("v", 1) != 1:
+            return raw.strip(), None
+        card = build_pending_card_from_llm_payload(data)
+        visible = ACTION_CARD_FENCE.sub("", text).strip()
+        return visible, card
+
+    def _consume_xml(text: str) -> tuple[str, dict[str, Any] | None] | None:
+        xm = ACTION_CARD_XML.search(text)
+        if not xm:
+            return None
+        inner = xm.group(1).strip()
+        try:
+            data = json.loads(inner)
+        except json.JSONDecodeError:
+            return raw.strip(), None
+        if not isinstance(data, dict):
+            return raw.strip(), None
+        if data.get("v", 1) != 1:
+            return raw.strip(), None
+        card = build_pending_card_from_llm_payload(data)
+        visible = ACTION_CARD_XML.sub("", text).strip()
+        return visible, card
+
+    out = _consume_fence(raw)
+    if out is not None:
+        return out
+    out = _consume_xml(raw)
+    if out is not None:
+        return out
+    return raw.strip(), None
 
 
 def sanitize_card_from_storage(card: Any) -> dict[str, Any] | None:

@@ -146,6 +146,93 @@ class SessionStore:
         out.sort(key=lambda m: m.updated_at or "", reverse=True)
         return out
 
+    @staticmethod
+    def _search_snippet(text: str, query_lower: str, margin: int = 48, max_len: int = 200) -> str:
+        t = (text or "").replace("\n", " ").replace("\r", " ")
+        if not t:
+            return ""
+        t_lower = t.lower()
+        pos = t_lower.find(query_lower)
+        if pos < 0:
+            cut = t[:max_len]
+            return cut + ("…" if len(t) > max_len else "")
+        q_len = len(query_lower)
+        start = max(0, pos - margin)
+        end = min(len(t), pos + q_len + margin)
+        chunk = t[start:end]
+        prefix = "…" if start > 0 else ""
+        suffix = "…" if end < len(t) else ""
+        return prefix + chunk.strip() + suffix
+
+    def search_full_text(
+        self,
+        query: str,
+        *,
+        max_sessions: int = 200,
+        max_hits_total: int = 80,
+        snippets_per_session: int = 5,
+    ) -> list[dict[str, Any]]:
+        """
+        按最近更新顺序扫描会话：匹配标题与各条消息的 content，以及 assistant card 的 title/body。
+        返回 [{ session_id, title, hits: [{ message_index, role, snippet }] }]。
+        """
+        q = (query or "").strip()
+        if not q:
+            return []
+        q_lower = q.lower()
+        results: list[dict[str, Any]] = []
+        hits_so_far = 0
+        metas = self.list_sessions()[:max_sessions]
+        for meta in metas:
+            if hits_so_far >= max_hits_total:
+                break
+            session_hits: list[dict[str, Any]] = []
+            title = (meta.title or "").strip() or meta.id
+            if q_lower in title.lower() and len(session_hits) < snippets_per_session and hits_so_far < max_hits_total:
+                session_hits.append(
+                    {
+                        "message_index": -1,
+                        "role": "title",
+                        "snippet": self._search_snippet(title, q_lower),
+                    }
+                )
+                hits_so_far += 1
+            try:
+                _, messages = self.load(meta.id)
+            except (OSError, FileNotFoundError, ValueError):
+                continue
+            for idx, msg in enumerate(messages):
+                if hits_so_far >= max_hits_total or len(session_hits) >= snippets_per_session:
+                    break
+                role = str(msg.get("role") or "")
+                content = msg.get("content") if isinstance(msg.get("content"), str) else ""
+                combined = content
+                card = msg.get("card")
+                if isinstance(card, dict):
+                    ct = str(card.get("title") or "")
+                    cb = str(card.get("body") or "")
+                    if ct or cb:
+                        combined = f"{content}\n{ct}\n{cb}".strip()
+                if q_lower not in combined.lower():
+                    continue
+                session_hits.append(
+                    {
+                        "message_index": idx,
+                        "role": role,
+                        "snippet": self._search_snippet(combined, q_lower),
+                    }
+                )
+                hits_so_far += 1
+            if session_hits:
+                results.append(
+                    {
+                        "session_id": meta.id,
+                        "title": title,
+                        "hits": session_hits,
+                    }
+                )
+        return results
+
     def _normalize_stored_message(self, item: dict[str, Any]) -> dict[str, Any] | None:
         role = item.get("role")
         if role not in ("user", "assistant", "system"):

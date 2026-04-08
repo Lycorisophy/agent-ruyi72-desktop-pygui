@@ -14,7 +14,7 @@ from src.agent.memory_tools import browse_memory_formatted, search_memory_keywor
 from src.agent.tools import tool_list_dir, tool_read_file, tool_run_shell
 from src.config import LLMConfig
 from src.llm.chat_model import chat_model_from_config
-from src.llm.prompts import build_system_block
+from src.llm.prompts import action_card_system_hint, build_system_block
 from src.skills.loader import build_react_skills_block, get_registry
 
 
@@ -146,7 +146,7 @@ def _display_trace(msgs: list[dict[str, str]]) -> str:
 
 def run_react(
     llm_cfg: LLMConfig,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     workspace: str,
     max_steps: int,
@@ -169,6 +169,7 @@ def run_react(
     system_prompt = build_system_block(extra_system=react_system)
     if memory_bootstrap:
         system_prompt = system_prompt + "\n\n" + memory_bootstrap
+    system_prompt = system_prompt + "\n\n" + action_card_system_hint()
 
     agent = create_agent(
         llm,

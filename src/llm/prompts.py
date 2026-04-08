@@ -53,11 +53,17 @@ SAFETY_PROMPT = """
 
 ACTION_CARD_SYSTEM_HINT = """
 【交互卡片 action_card（可选）】
-当需要用户在界面上确认一组带默认建议的选项时（例如即将执行的操作、参数开关），可在回复**末尾**附加一个单独的代码块，语言标记为 action_card，内容为 JSON（v=1），例如：
+当需要用户在界面上确认一组带默认建议的选项时（例如即将执行的操作、参数开关），可在回复**末尾**使用以下**任一**格式（v=1 的 JSON）：
 
+方式 A — 代码块（语言标记 action_card）：
 ```action_card
 {"v": 1, "title": "即将执行", "body": "说明文字", "countdown_sec": 60, "options": [{"id": "dry", "label": "仅 Dry-run", "default": true}, {"id": "apply", "label": "实际写入", "default": false}]}
 ```
+
+方式 B — 标签包裹（JSON 可换行排版）：
+<action_card>
+{"v": 1, "title": "即将执行", "body": "说明", "countdown_sec": 60, "options": [{"id": "a", "label": "选项甲", "default": true}]}
+</action_card>
 
 要求：
 - 仅当确实需要用户确认时使用；普通问答不要带卡片。

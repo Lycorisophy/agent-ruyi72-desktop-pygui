@@ -91,6 +91,9 @@ class Api:
     def list_sessions(self) -> list:
         return self._svc.list_sessions()
 
+    def search_sessions_text(self, query: str) -> list:
+        return self._svc.search_sessions_text(query or "")
+
     def create_session(self, title: str | None = None) -> dict:
         return self._svc.create_session(title=title)
 

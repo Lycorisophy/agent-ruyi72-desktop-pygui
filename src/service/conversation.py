@@ -247,6 +247,9 @@ class ConversationService:
     def list_sessions(self) -> list[dict]:
         return [m.model_dump() for m in self._store.list_sessions()]
 
+    def search_sessions_text(self, query: str) -> list[dict[str, Any]]:
+        return self._store.search_full_text(query or "")
+
     def create_session(self, title: str | None = None) -> dict:
         m = self._store.create_session(title=title, react_max_steps=self._react_default)
         return self.open_session(m.id)
@@ -347,6 +350,115 @@ class ConversationService:
             return self.open_session(m.id)
         return {"ok": True}
 
+    def _chat_style_followup_after_card(self, memory_extra: str) -> str | None:
+        """在已有历史（含卡片确认 user 行）上走一轮与对话模式相同的 Chat，追加 assistant。"""
+        assert self._meta is not None
+        ws = (self._meta.workspace or "").strip()
+        if not ws:
+            return "请先在侧栏或上方设置「工作区」为有效文件夹路径。"
+        root = Path(ws).expanduser().resolve()
+        if not root.is_dir():
+            return f"工作区不存在或不是目录: {root}"
+        skills_prompt = build_safe_skills_prompt()
+        extras = [action_card_system_hint()]
+        if skills_prompt:
+            extras.insert(0, skills_prompt)
+        system_block = build_system_block(extra_system="\n\n".join(extras))
+        if memory_extra:
+            system_block = system_block + "\n\n" + memory_extra
+        call_messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_block}
+        ]
+        call_messages.extend(self.messages_for_llm())
+        try:
+            reply = OllamaClient(self._llm).chat(call_messages)
+        except OllamaClientError as e:
+            return str(e)
+        visible, card = split_reply_action_card(reply)
+        content = visible.strip() if visible else ""
+        if card is not None:
+            if not content:
+                content = str(card.get("title") or "").strip() or "请确认下列设置。"
+            supersede_pending_cards(self._messages)
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": content,
+                "card": card,
+            }
+        else:
+            assistant_msg = {"role": "assistant", "content": content or reply}
+        self._messages.append(assistant_msg)
+        return None
+
+    def _followup_llm_after_action_card(self) -> str | None:
+        """
+        卡片确认产生的 user 摘要已写入历史后，自动请求模型下一条回复。
+        拟人模式：使用与对话相同的一次 Chat（不走路径异步拟人管道），避免无回复。
+        """
+        self.ensure_session()
+        assert self._active_id is not None and self._meta is not None
+        if not self._messages or self._messages[-1].get("role") != "user":
+            return None
+        user_text = str(self._messages[-1].get("content") or "").strip()
+        if not user_text.startswith("（卡片确认）"):
+            return None
+
+        memory_extra = ""
+        if self._memory_bootstrap_pending:
+            memory_extra = build_memory_bootstrap_block()
+            self._memory_bootstrap_pending = False
+
+        try:
+            if self._meta.session_variant == "team":
+                ts = self._meta.team_size
+                m_count = len(self._cfg.team.models)
+                if ts is None or not (2 <= ts <= 4):
+                    return "团队会话元数据无效。"
+                if ts > m_count:
+                    return f"team.models 仅 {m_count} 条，无法继续团队编排。"
+                try:
+                    reply = run_team_turn(
+                        self._cfg,
+                        team_size=ts,
+                        prior_messages=list(self._messages[:-1]),
+                        user_text=user_text,
+                        memory_extra=memory_extra or None,
+                    )
+                except ValueError as e:
+                    self._messages.append({"role": "assistant", "content": str(e)})
+                except OllamaClientError as e:
+                    self._messages.append({"role": "assistant", "content": str(e)})
+                else:
+                    self._messages.append({"role": "assistant", "content": reply})
+            elif self._meta.mode == "react":
+                ws = (self._meta.workspace or "").strip()
+                if not ws:
+                    return "请先在侧栏或上方设置「工作区」为有效文件夹路径。"
+                root = Path(ws).expanduser().resolve()
+                if not root.is_dir():
+                    return f"工作区不存在或不是目录: {root}"
+                ok, _out = run_react(
+                    self._llm,
+                    self._messages,
+                    workspace=str(root),
+                    max_steps=self._meta.react_max_steps,
+                    memory_bootstrap=memory_extra or None,
+                )
+                if ok:
+                    self._parse_action_card_on_last_assistant(self._messages)
+            else:
+                err = self._chat_style_followup_after_card(memory_extra)
+                if err:
+                    return err
+
+            self._store.save_messages(self._active_id, self._messages)
+            self._meta, self._messages = self._store.load(self._active_id)
+        except OllamaClientError as e:
+            return str(e)
+        except ValueError as e:
+            return str(e)
+        return None
+
     def submit_action_card(
         self,
         card_id: str,
@@ -423,11 +535,33 @@ class ConversationService:
         self._messages.append({"role": "user", "content": summary})
         self._store.save_messages(self._active_id, self._messages)
         self._meta, self._messages = self._store.load(self._active_id)
+
+        followup_error = self._followup_llm_after_action_card()
         return {
             "ok": True,
             "meta": self._meta.model_dump(),
             "messages": list(self._messages),
+            "followup_error": followup_error,
         }
+
+    def _parse_action_card_on_last_assistant(self, messages: list[dict[str, Any]]) -> None:
+        """从最近一条 assistant 正文中提取 ```action_card```，写入 card 并 supersede 旧 pending。"""
+        for i in range(len(messages) - 1, -1, -1):
+            m = messages[i]
+            if m.get("role") != "assistant":
+                continue
+            c = m.get("content")
+            if not isinstance(c, str):
+                return
+            visible, card = split_reply_action_card(c)
+            if card is None:
+                return
+            content = visible.strip() if visible else ""
+            if not content:
+                content = str(card.get("title") or "").strip() or "请确认下列设置。"
+            supersede_pending_cards(messages)
+            messages[i] = {"role": "assistant", "content": content, "card": card}
+            return
 
     def send_message(self, text: str) -> tuple[bool, str, bool]:
         """
@@ -547,6 +681,8 @@ class ConversationService:
             max_steps=self._meta.react_max_steps,
             memory_bootstrap=memory_extra or None,
         )
+        if ok:
+            self._parse_action_card_on_last_assistant(self._messages)
         self._store.save_messages(self._active_id, self._messages)
         self._meta, _ = self._store.load(self._active_id)
         return ok, out, False

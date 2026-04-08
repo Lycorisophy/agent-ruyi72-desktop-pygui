@@ -668,6 +668,9 @@ function appendAssistantMessage(m, box, instant, gen) {
         }
         if (res.meta) applyMetaToForm(res.meta);
         if (res.messages) renderMessages(res.messages, { instant: true });
+        if (res.followup_error) {
+          appendMessage("assistant", res.followup_error, true);
+        }
         await renderSessionList();
       } catch (e) {
         window.alert(String(e));
@@ -768,10 +771,21 @@ function appendAssistantMessage(m, box, instant, gen) {
 /**
  * @param {object} [options]
  * @param {boolean} [options.instant] 默认 true：服务端同步列表一次写入，避免长历史打字机拖慢
+ * @param {boolean} [options.typewriterLastAssistant] 为 true 时仅最后一条 assistant 用打字机，其余仍 instant
  */
 function renderMessages(messages, options) {
   const opts = options || {};
-  const instant = opts.instant !== false;
+  const instantDefault = opts.instant !== false;
+  const twLastAsst = opts.typewriterLastAssistant === true;
+  let lastAssistantIdx = -1;
+  if (twLastAsst && messages && messages.length) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        lastAssistantIdx = i;
+        break;
+      }
+    }
+  }
   const box = document.getElementById("messages");
   box.innerHTML = "";
   messageRenderGen += 1;
@@ -779,37 +793,44 @@ function renderMessages(messages, options) {
   const emptyHint = "暂无消息。设置工作区并选择模式后发送。";
   if (!messages || !messages.length) {
     const { wrap, body } = createMessageBubble("system", false, {
-      initialText: instant ? emptyHint : undefined,
+      initialText: instantDefault ? emptyHint : undefined,
     });
     box.appendChild(wrap);
-    if (!instant) startTypewriter(body, emptyHint, gen);
+    if (!instantDefault) startTypewriter(body, emptyHint, gen);
     box.scrollTop = box.scrollHeight;
     return;
   }
-  for (const m of messages) {
+  messages.forEach((m, idx) => {
     const role = m.role;
     const text = m.content || "";
+    const msgInstant =
+      instantDefault &&
+      !(
+        twLastAsst &&
+        lastAssistantIdx >= 0 &&
+        idx === lastAssistantIdx &&
+        role === "assistant"
+      );
     if (role === "system") {
       const { wrap, body } = createMessageBubble("system", false, {
-        initialText: instant ? text : undefined,
+        initialText: msgInstant ? text : undefined,
       });
       box.appendChild(wrap);
-      if (!instant) startTypewriter(body, text, gen);
-      continue;
+      if (!msgInstant) startTypewriter(body, text, gen);
+      return;
     }
     if (role === "user") {
       const { wrap, body } = createMessageBubble("user", false, {
-        initialText: instant ? text : undefined,
+        initialText: msgInstant ? text : undefined,
       });
       box.appendChild(wrap);
-      if (!instant) startTypewriter(body, text, gen);
-      continue;
+      if (!msgInstant) startTypewriter(body, text, gen);
+      return;
     }
     if (role === "assistant") {
-      appendAssistantMessage(m, box, instant, gen);
-      continue;
+      appendAssistantMessage(m, box, msgInstant, gen);
     }
-  }
+  });
   box.scrollTop = box.scrollHeight;
 }
 
@@ -905,6 +926,101 @@ async function loadSettings() {
   }
 }
 
+let sessionSearchDebounceTimer = null;
+
+function getSessionSearchQuery() {
+  const inp = document.getElementById("session-search-input");
+  return inp ? inp.value.trim() : "";
+}
+
+function showSessionListPanel() {
+  const listEl = document.getElementById("session-list");
+  const resultsEl = document.getElementById("session-search-results");
+  const emptyEl = document.getElementById("session-search-empty");
+  if (listEl) listEl.classList.remove("hidden");
+  if (resultsEl) resultsEl.classList.add("hidden");
+  if (emptyEl) emptyEl.classList.add("hidden");
+}
+
+function showSearchResultsPanel() {
+  const listEl = document.getElementById("session-list");
+  const resultsEl = document.getElementById("session-search-results");
+  if (listEl) listEl.classList.add("hidden");
+  if (resultsEl) resultsEl.classList.remove("hidden");
+}
+
+function scheduleSessionSearch() {
+  if (sessionSearchDebounceTimer) {
+    clearTimeout(sessionSearchDebounceTimer);
+    sessionSearchDebounceTimer = null;
+  }
+  sessionSearchDebounceTimer = setTimeout(async () => {
+    sessionSearchDebounceTimer = null;
+    const q = getSessionSearchQuery();
+    if (!q) {
+      showSessionListPanel();
+      await renderSessionList();
+      return;
+    }
+    await renderSessionSearchResults(q);
+  }, 320);
+}
+
+function searchHitRoleLabel(role) {
+  const m = {
+    user: "用户",
+    assistant: "助手",
+    system: "系统",
+    title: "标题",
+  };
+  return m[role] || role || "—";
+}
+
+async function renderSessionSearchResults(query) {
+  const q = (query || "").trim();
+  const resultsEl = document.getElementById("session-search-results");
+  const emptyEl = document.getElementById("session-search-empty");
+  if (!resultsEl) return;
+  if (!q) {
+    showSessionListPanel();
+    return;
+  }
+  showSearchResultsPanel();
+  resultsEl.innerHTML = "";
+  if (emptyEl) emptyEl.classList.add("hidden");
+  let rows = [];
+  try {
+    rows = await api().search_sessions_text(q);
+  } catch (e) {
+    const li = el("li", "session-search-error", "搜索失败：" + String(e));
+    resultsEl.appendChild(li);
+    return;
+  }
+  if (!rows.length) {
+    if (emptyEl) emptyEl.classList.remove("hidden");
+    return;
+  }
+  for (const row of rows) {
+    const li = el("li", "session-search-session");
+    li.dataset.id = row.session_id;
+    if (row.session_id === currentSessionId) li.classList.add("active");
+    li.appendChild(
+      el("div", "session-search-session-title", row.title || row.session_id)
+    );
+    (row.hits || []).forEach((h) => {
+      const line = el("div", "session-search-hit");
+      line.appendChild(
+        el("span", "session-search-hit-role", searchHitRoleLabel(h.role))
+      );
+      const sn = el("span", "session-search-hit-snippet", h.snippet || "");
+      line.appendChild(sn);
+      li.appendChild(line);
+    });
+    li.addEventListener("click", () => openSession(row.session_id));
+    resultsEl.appendChild(li);
+  }
+}
+
 function applyMetaToForm(meta) {
   if (!meta) return;
   lastSessionMeta = meta;
@@ -944,6 +1060,11 @@ async function renderSessionList() {
       for (const s of g.items) appendSessionRow(s, ul);
     }
   }
+  if (getSessionSearchQuery()) {
+    await renderSessionSearchResults(getSessionSearchQuery());
+  } else {
+    showSessionListPanel();
+  }
 }
 
 async function openSession(id) {
@@ -953,10 +1074,17 @@ async function openSession(id) {
   await renderSessionList();
 }
 
-async function refreshActive() {
+/**
+ * @param {{ typewriterLastAssistant?: boolean, instant?: boolean }} [options]
+ */
+async function refreshActive(options) {
+  const opts = options || {};
   const data = await api().get_active_session();
   applyMetaToForm(data.meta);
-  renderMessages(data.messages, { instant: true });
+  renderMessages(data.messages, {
+    instant: opts.instant !== false,
+    typewriterLastAssistant: opts.typewriterLastAssistant === true,
+  });
   await renderSessionList();
 }
 
@@ -1042,20 +1170,18 @@ async function onSubmit(e) {
   box.scrollTop = box.scrollHeight;
 
   setBusy(true);
-  setMainWaiting(
-    true,
-    isTeam ? "团队多模型处理中，请稍候…" : "正在生成回复…"
-  );
   try {
     await pushWorkspaceAndMode();
     const res = await api().send_message(text);
     pendingEl.remove();
-    await refreshActive();
+    setMainWaiting(false);
+    await refreshActive({ typewriterLastAssistant: true });
     if (!res.ok && res.append_error) {
       appendMessage("assistant", res.message, true);
     }
   } catch (err) {
     pendingEl.remove();
+    setMainWaiting(false);
     appendMessage("assistant", "调用失败：" + String(err), true);
   } finally {
     setBusy(false);
@@ -1100,6 +1226,11 @@ function init() {
       }
       renderSessionList();
     });
+  }
+
+  const searchInp = document.getElementById("session-search-input");
+  if (searchInp) {
+    searchInp.addEventListener("input", () => scheduleSessionSearch());
   }
 
   document.getElementById("chat-form").addEventListener("submit", onSubmit);
