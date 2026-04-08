@@ -17,6 +17,7 @@ from src.llm.ollama import effective_trust_env, resolve_llm_api_key  # noqa: E40
 from src.agent.memory_extractor import extract_and_store_from_text  # noqa: E402
 from src.agent.memory_tools import browse_memory_formatted  # noqa: E402
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
+from src.skills.loader import get_registry  # noqa: E402
 from src.storage.memory_store import MemoryStore, default_store  # noqa: E402
 from src.storage.session_store import SessionStore  # noqa: E402
 
@@ -172,6 +173,32 @@ class Api:
             "events": events,
             "relations": relations,
         }
+
+    def list_skills_compact(self) -> list[dict]:
+        reg = get_registry()
+        out: list[dict] = []
+        for s in reg.skills:
+            desc = (s.description or "").strip()
+            if len(desc) > 300:
+                desc = desc[:297] + "..."
+            out.append(
+                {
+                    "name": s.name,
+                    "description": desc,
+                    "level": s.level,
+                    "id": s.id,
+                }
+            )
+        return out
+
+    def preview_workspace_file(self, rel_path: str | None = None) -> dict:
+        return self._svc.preview_workspace_file(rel_path or "")
+
+    def list_workspace_preview(self, rel_path: str | None = None) -> dict:
+        p = ("" if rel_path is None else str(rel_path)).strip().replace("\\", "/")
+        if not p:
+            p = "."
+        return self._svc.list_workspace_preview(p)
 
 
 def main() -> None:

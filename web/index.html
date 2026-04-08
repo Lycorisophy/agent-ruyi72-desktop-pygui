@@ -103,26 +103,77 @@
         </label>
       </div>
     </section>
-    <main class="main">
-      <div id="messages" class="messages" aria-live="polite"></div>
-      <form id="chat-form" class="composer">
-        <textarea
-          id="input"
-          class="input"
-          rows="3"
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-          autocomplete="off"
-        ></textarea>
-        <button type="button" id="btn-persona-interrupt" class="send btn-interrupt hidden" title="中断当前拟人回复">打断</button>
-        <button type="submit" id="send" class="send">发送</button>
-      </form>
-      <div id="main-waiting" class="main-waiting hidden" aria-busy="true" aria-hidden="true">
-        <div class="main-waiting-inner">
-          <div class="spinner" aria-hidden="true"></div>
-          <p id="main-waiting-text" class="main-waiting-text">请稍候…</p>
-        </div>
+    <div class="content-body">
+      <div class="content-main-column">
+        <main class="main">
+          <div class="main-split-toolbar">
+            <button type="button" id="btn-toggle-split" class="btn btn-small" aria-pressed="false" title="并排打开预览栏">分屏预览</button>
+            <span id="split-toolbar-hint" class="split-toolbar-hint">关闭时仅显示对话；开启后右侧可浏览工作区目录（仅元信息）或从消息「分屏打开」查看正文。</span>
+          </div>
+          <div class="main-split" id="main-split">
+            <div class="pane-primary">
+              <div id="messages" class="messages" aria-live="polite"></div>
+            </div>
+            <div class="pane-secondary" id="pane-secondary" aria-hidden="true">
+              <div class="pane-secondary-head">
+                <span class="pane-secondary-title">工作区目录</span>
+                <button type="button" id="btn-preview-up" class="btn btn-small" title="上级目录">上级</button>
+                <button type="button" id="btn-preview-refresh" class="btn btn-small" title="刷新列表">刷新</button>
+              </div>
+              <p id="preview-dir-breadcrumb" class="preview-dir-breadcrumb" aria-live="polite"></p>
+              <p id="preview-status" class="preview-status" aria-live="polite"></p>
+              <div id="secondary-pane-body" class="secondary-pane-body">
+                <div id="workspace-preview-panel" class="workspace-preview-panel">
+                  <div class="workspace-preview-scroll">
+                    <table class="workspace-preview-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">名称</th>
+                          <th scope="col">类型</th>
+                          <th scope="col">大小</th>
+                          <th scope="col">修改时间 (UTC)</th>
+                        </tr>
+                      </thead>
+                      <tbody id="workspace-preview-tbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <pre id="secondary-message-view" class="secondary-preview secondary-message-view hidden" tabindex="0"></pre>
+              </div>
+            </div>
+          </div>
+          <div class="composer-wrap">
+            <div id="prompt-template-bar" class="prompt-template-bar" aria-label="提示词模板"></div>
+            <form id="chat-form" class="composer">
+              <textarea
+                id="input"
+                class="input"
+                rows="3"
+                placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+                autocomplete="off"
+              ></textarea>
+              <button type="button" id="btn-persona-interrupt" class="send btn-interrupt hidden" title="中断当前拟人回复">打断</button>
+              <button type="submit" id="send" class="send">发送</button>
+            </form>
+          </div>
+          <div id="main-waiting" class="main-waiting hidden" aria-busy="true" aria-hidden="true">
+            <div class="main-waiting-inner">
+              <div class="spinner" aria-hidden="true"></div>
+              <p id="main-waiting-text" class="main-waiting-text">请稍候…</p>
+            </div>
+          </div>
+        </main>
       </div>
-    </main>
+      <aside class="context-rail" id="context-rail" aria-label="任务上下文与工具">
+        <h3 class="context-rail-title">任务与工具</h3>
+        <div id="context-session-block" class="context-block"></div>
+        <div id="context-tools-block" class="context-block"></div>
+        <details class="context-details" id="context-skills-details" open>
+          <summary class="context-details-summary">可用技能</summary>
+          <div id="context-skills-block" class="context-skills-list"></div>
+        </details>
+      </aside>
+    </div>
   </div>
 
   <!-- 记住：输入弹窗 -->

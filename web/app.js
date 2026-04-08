@@ -83,6 +83,14 @@ function createMessageBubble(role, isError, opts) {
       }
     });
     row.appendChild(btn);
+    const btnSplit = el("button", "btn-msg-split", "分屏打开");
+    btnSplit.type = "button";
+    btnSplit.title = "在预览栏打开本条正文";
+    btnSplit.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openMessageInSplit(body);
+    });
+    row.appendChild(btnSplit);
     wrap.appendChild(row);
   }
   return { wrap, body };
@@ -107,9 +115,344 @@ function el(tag, className, text) {
   return n;
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function insertAtCursor(textarea, text) {
+  const ta = textarea;
+  if (!ta) return;
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  const v = ta.value;
+  ta.value = v.slice(0, start) + text + v.slice(end);
+  const pos = start + text.length;
+  ta.selectionStart = pos;
+  ta.selectionEnd = pos;
+  ta.focus();
+}
+
+function showSecondaryDirPanel() {
+  secondaryPaneMode = "dir";
+  const panel = document.getElementById("workspace-preview-panel");
+  const msg = document.getElementById("secondary-message-view");
+  if (panel) panel.classList.remove("hidden");
+  if (msg) msg.classList.add("hidden");
+}
+
+function showSecondaryMessagePanel(text, statusLine) {
+  secondaryPaneMode = "message";
+  const panel = document.getElementById("workspace-preview-panel");
+  const msg = document.getElementById("secondary-message-view");
+  const bc = document.getElementById("preview-dir-breadcrumb");
+  if (panel) panel.classList.add("hidden");
+  if (msg) {
+    msg.classList.remove("hidden");
+    msg.textContent = text || "";
+  }
+  if (bc) bc.textContent = "";
+  const st = document.getElementById("preview-status");
+  if (st) st.textContent = statusLine || "";
+}
+
+function setSecondaryPreviewText(text, statusLine) {
+  showSecondaryMessagePanel(text, statusLine);
+}
+
+function workspacePreviewParentPath(current) {
+  const c = (current || "").trim();
+  if (!c) return null;
+  const i = c.lastIndexOf("/");
+  return i < 0 ? "" : c.slice(0, i);
+}
+
+function joinWorkspaceRelPath(base, name) {
+  const b = (base || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return b ? `${b}/${name}` : name;
+}
+
+function formatFileSize(n) {
+  if (n == null) return "—";
+  const b = Number(n);
+  if (!Number.isFinite(b)) return "—";
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function formatMtimeShort(iso) {
+  if (!iso) return "—";
+  const s = String(iso);
+  return s.length >= 19 ? s.slice(0, 19).replace("T", " ") : s;
+}
+
+function updateWorkspacePreviewUpButton() {
+  const btn = document.getElementById("btn-preview-up");
+  if (!btn) return;
+  const canUp = workspacePreviewParentPath(workspacePreviewCurrentPath) != null;
+  btn.disabled = !canUp;
+}
+
+async function refreshWorkspacePreview(relPath) {
+  showSecondaryDirPanel();
+  const rel =
+    relPath === undefined || relPath === null
+      ? workspacePreviewCurrentPath
+      : String(relPath);
+  workspacePreviewCurrentPath = rel;
+  const st = document.getElementById("preview-status");
+  const tbody = document.getElementById("workspace-preview-tbody");
+  const bc = document.getElementById("preview-dir-breadcrumb");
+  if (st) st.textContent = "加载中…";
+  if (tbody) tbody.innerHTML = "";
+  updateWorkspacePreviewUpButton();
+  try {
+    const r = await api().list_workspace_preview(rel || "");
+    if (!r.ok) {
+      if (st) st.textContent = r.error || "加载失败";
+      if (bc) bc.textContent = "";
+      return;
+    }
+    if (bc) {
+      bc.textContent = r.path
+        ? `当前：${r.path}`
+        : "当前：工作区根目录";
+    }
+    let tail = r.truncated ? "（仅显示前 500 项）" : "";
+    if (st) st.textContent = `共 ${(r.entries || []).length} 项${tail}`;
+    if (tbody) {
+      for (const e of r.entries || []) {
+        const tr = document.createElement("tr");
+        const kind = e.kind === "dir" ? "dir" : "file";
+        tr.className =
+          kind === "dir"
+            ? "workspace-preview-row-dir"
+            : "workspace-preview-row-file";
+        tr.dataset.kind = kind;
+        tr.dataset.name = e.name || "";
+        const tdName = document.createElement("td");
+        tdName.textContent = e.name || "";
+        const tdKind = document.createElement("td");
+        tdKind.textContent = kind === "dir" ? "文件夹" : "文件";
+        const tdSize = document.createElement("td");
+        tdSize.textContent =
+          kind === "dir" ? "—" : formatFileSize(e.size);
+        const tdTime = document.createElement("td");
+        tdTime.textContent = formatMtimeShort(e.mtime);
+        tr.appendChild(tdName);
+        tr.appendChild(tdKind);
+        tr.appendChild(tdSize);
+        tr.appendChild(tdTime);
+        if (kind === "dir") {
+          tr.addEventListener("click", () => {
+            const next = joinWorkspaceRelPath(workspacePreviewCurrentPath, e.name);
+            void refreshWorkspacePreview(next);
+          });
+        } else {
+          tr.title = "第一版仅展示基本信息，不读取文件内容";
+        }
+        tbody.appendChild(tr);
+      }
+    }
+    updateWorkspacePreviewUpButton();
+  } catch (e) {
+    if (st) st.textContent = String(e);
+  }
+}
+
+function refreshWorkspacePreviewIfSplitActive() {
+  if (!document.body.classList.contains("split-active")) return;
+  if (secondaryPaneMode !== "dir") return;
+  void refreshWorkspacePreview(workspacePreviewCurrentPath);
+}
+
+function setSplitActive(active) {
+  document.body.classList.toggle("split-active", !!active);
+  const btn = document.getElementById("btn-toggle-split");
+  const pane = document.getElementById("pane-secondary");
+  if (btn) btn.setAttribute("aria-pressed", active ? "true" : "false");
+  if (pane) pane.setAttribute("aria-hidden", active ? "false" : "true");
+  if (active && secondaryPaneMode === "dir") {
+    void refreshWorkspacePreview(workspacePreviewCurrentPath);
+  }
+}
+
+function openMessageInSplit(bodyEl) {
+  const t = (bodyEl && bodyEl.textContent) || "";
+  showSecondaryMessagePanel(t, "来自对话消息（纯文本）");
+  setSplitActive(true);
+}
+
+const PROMPT_TEMPLATES_GENERAL = [
+  {
+    label: "总结上文",
+    text: "请基于当前对话上文做简要总结，条目不超过 8 条。",
+  },
+  {
+    label: "列出要点",
+    text: "请把上文整理为分级要点（Markdown），尽量简洁。",
+  },
+  {
+    label: "解释代码",
+    text: "请解释下面代码在做什么、关键逻辑与潜在风险（如有）：\n\n```\n\n```",
+  },
+  {
+    label: "中译",
+    text: "请将下面内容译为通顺的简体中文，保留专有名词必要时附原文：\n\n",
+  },
+];
+
+function getModeFromDom() {
+  const r = document.querySelector('input[name="mode"]:checked');
+  return r ? r.value : "chat";
+}
+
+function updatePromptTemplateBar() {
+  const bar = document.getElementById("prompt-template-bar");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const mode = getModeFromDom();
+  const meta = lastSessionMeta;
+  /** @type {{ label: string, text: string }[]} */
+  const items = PROMPT_TEMPLATES_GENERAL.map((x) => ({ ...x }));
+  if (mode === "react") {
+    items.push({
+      label: "列出根目录",
+      text: "请用 list_dir 查看工作区根目录，并概括有哪些文件与子文件夹。",
+    });
+  }
+  if (meta && meta.session_variant === "knowledge") {
+    items.push(
+      {
+        label: "收录整理",
+        text: "请查看工作区目录结构，对待整理或收件箱中的文件给出归类与命名建议；不要删除任何文件，先列方案。",
+      },
+      {
+        label: "摘要索引",
+        text: "请阅读相关文档后，生成可写入索引的「标题 + 一句话摘要」列表（Markdown）。",
+      },
+      {
+        label: "库内问答",
+        text: "请仅根据工作区内已有文件回答（若信息不足请说明已查看的路径）：",
+      }
+    );
+  }
+  const ta = document.getElementById("input");
+  for (const { label, text } of items) {
+    const b = el("button", "prompt-chip", label);
+    b.type = "button";
+    b.addEventListener("click", () => insertAtCursor(ta, text));
+    bar.appendChild(b);
+  }
+}
+
+async function updateContextRail() {
+  const sessionEl = document.getElementById("context-session-block");
+  const toolsEl = document.getElementById("context-tools-block");
+  const skillsEl = document.getElementById("context-skills-block");
+  if (!sessionEl || !toolsEl || !skillsEl) return;
+
+  const m = lastSessionMeta;
+  if (!m) {
+    sessionEl.innerHTML = '<p class="context-kv">暂无会话</p>';
+    toolsEl.innerHTML = "";
+    skillsEl.innerHTML = "";
+    return;
+  }
+
+  const variantLabel =
+    m.session_variant === "team"
+      ? "团队"
+      : m.session_variant === "knowledge"
+        ? "知识库"
+        : "普通";
+  let teamLine = "";
+  if (m.session_variant === "team" && m.team_size != null) {
+    teamLine = `<p class="context-kv">团队人数：${escapeHtml(String(m.team_size))}</p>`;
+  }
+  let presetLine = "";
+  if (m.session_variant === "knowledge") {
+    presetLine = `<p class="context-kv">知识库预设：${escapeHtml(
+      kbPresetLabel(m.kb_preset)
+    )}</p>`;
+  }
+
+  sessionEl.innerHTML = `
+    <h4>当前会话</h4>
+    <p class="context-kv">标题：${escapeHtml(m.title || m.id || "")}</p>
+    <p class="context-kv">id：${escapeHtml(m.id || "")}</p>
+    <p class="context-kv">类型：${escapeHtml(variantLabel)}</p>
+    ${teamLine}
+    ${presetLine}
+    <p class="context-kv">模式：${escapeHtml(m.mode || "chat")}</p>
+    <p class="context-kv">ReAct 步数：${escapeHtml(
+      String(m.react_max_steps != null ? m.react_max_steps : 8)
+    )}</p>
+    <p class="context-kv">工作区：${escapeHtml(m.workspace || "（未设置）")}</p>
+  `;
+
+  const mode = m.mode || "chat";
+  let toolsHtml = "<h4>可用工具</h4>";
+  if (m.session_variant === "team") {
+    toolsHtml +=
+      "<p>团队会话为链式多模型编排，无本地 ReAct 工具调用。</p>";
+  } else if (mode === "react") {
+    toolsHtml += `<ul class="context-tools-ul">
+      <li><strong>read_file</strong> — 读取工作区内 UTF-8 文本</li>
+      <li><strong>list_dir</strong> — 列出目录内容</li>
+      <li><strong>run_shell</strong> — 在工作区根目录执行 shell 命令</li>
+      <li><strong>load_skill</strong> — 按名称加载技能文档</li>
+      <li><strong>browse_memory</strong> — 浏览跨会话记忆摘要</li>
+      <li><strong>search_memory</strong> — 按关键词搜索记忆</li>
+    </ul>`;
+  } else {
+    toolsHtml +=
+      "<p>当前为对话模式，模型不会自动调用工具。需要某技能全文时可发送：<code>加载技能:技能名</code>。</p>";
+    if (mode === "persona") {
+      toolsHtml +=
+        "<p>拟人模式由运行时注入技能与安全说明，仍无 ReAct 工具循环。</p>";
+    }
+  }
+  toolsEl.innerHTML = toolsHtml;
+
+  try {
+    const skills = await api().list_skills_compact();
+    const byLevel = [[], [], []];
+    for (const s of skills) {
+      const lv = Math.min(2, Math.max(0, Number(s.level) || 0));
+      byLevel[lv].push(s);
+    }
+    const labels = ["safe(0)", "act(1)", "warn_act(2)"];
+    let html = "";
+    for (let i = 0; i < 3; i++) {
+      if (!byLevel[i].length) continue;
+      html += `<p class="context-kv" style="margin-top:8px;font-weight:600;color:var(--text-label)">${labels[i]}</p>`;
+      for (const s of byLevel[i]) {
+        html += `<div class="context-skill-item"><span class="context-skill-name">${escapeHtml(
+          s.name || ""
+        )}</span><br/><span>${escapeHtml(s.description || "")}</span></div>`;
+      }
+    }
+    skillsEl.innerHTML = html || '<p class="context-kv">（无技能）</p>';
+  } catch (e) {
+    skillsEl.innerHTML = `<p class="context-kv">${escapeHtml(
+      "技能列表加载失败：" + String(e)
+    )}</p>`;
+  }
+}
+
 let currentSessionId = null;
 /** @type {object | null} */
 let lastSessionMeta = null;
+/** 分屏右侧：当前列出的工作区相对目录，"" 表示根 */
+let workspacePreviewCurrentPath = "";
+/** "dir" | "message" — 消息分屏正文与目录表互斥 */
+let secondaryPaneMode = "dir";
 let teamMaxAgents = 0;
 /** 递增后可使进行中的打字机动画停止（避免切换会话时旧动画写新 DOM） */
 let messageRenderGen = 0;
@@ -1090,6 +1433,7 @@ async function renderSessionSearchResults(query) {
 
 function applyMetaToForm(meta) {
   if (!meta) return;
+  const prevId = lastSessionMeta && lastSessionMeta.id;
   lastSessionMeta = meta;
   currentSessionId = meta.id;
   const ws = document.getElementById("workspace");
@@ -1102,6 +1446,12 @@ function applyMetaToForm(meta) {
   const steps = document.getElementById("react-steps");
   steps.value = meta.react_max_steps != null ? meta.react_max_steps : 8;
   updateTeamModeUi(meta);
+  updatePromptTemplateBar();
+  void updateContextRail();
+  if (prevId !== meta.id) {
+    workspacePreviewCurrentPath = "";
+  }
+  refreshWorkspacePreviewIfSplitActive();
 }
 
 async function renderSessionList() {
@@ -1310,6 +1660,21 @@ function init() {
 
   document.getElementById("chat-form").addEventListener("submit", onSubmit);
 
+  document.getElementById("btn-toggle-split").addEventListener("click", () => {
+    const on = !document.body.classList.contains("split-active");
+    setSplitActive(on);
+  });
+
+  document.getElementById("btn-preview-refresh").addEventListener("click", () => {
+    void refreshWorkspacePreview(workspacePreviewCurrentPath);
+  });
+
+  document.getElementById("btn-preview-up").addEventListener("click", () => {
+    const p = workspacePreviewParentPath(workspacePreviewCurrentPath);
+    if (p === null) return;
+    void refreshWorkspacePreview(p);
+  });
+
   const personaInterruptBtn = document.getElementById("btn-persona-interrupt");
   if (personaInterruptBtn) {
     personaInterruptBtn.addEventListener("click", async () => {
@@ -1417,6 +1782,7 @@ function init() {
 
   document.querySelectorAll('input[name="mode"]').forEach((r) => {
     r.addEventListener("change", async () => {
+      updatePromptTemplateBar();
       try {
         await pushWorkspaceAndMode();
         await refreshActive();

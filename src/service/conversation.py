@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.agent.tools import ToolError, safe_child
 from src.agent.action_card import (
     split_reply_action_card,
     supersede_pending_cards,
@@ -298,6 +300,96 @@ class ConversationService:
         if self._meta is None or self._meta.session_variant != "knowledge":
             return None
         return knowledge_base_system_hint(self._meta.kb_preset)
+
+    def preview_workspace_file(
+        self, rel_path: str, *, max_chars: int = 120_000
+    ) -> dict[str, Any]:
+        """供 UI 分屏预览：路径相对当前会话工作区，约束同 ReAct read_file。"""
+        self.ensure_session()
+        assert self._meta is not None
+        ws = (self._meta.workspace or "").strip()
+        if not ws:
+            return {"ok": False, "error": "工作区未设置。"}
+        root = Path(ws).expanduser().resolve()
+        if not root.is_dir():
+            return {"ok": False, "error": f"工作区不存在或不是目录: {root}"}
+        try:
+            target = safe_child(root, rel_path)
+        except ToolError as e:
+            return {"ok": False, "error": str(e)}
+        if not target.is_file():
+            return {"ok": False, "error": f"不是文件或不存在: {rel_path}"}
+        try:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return {"ok": False, "error": f"读取失败: {e!s}"}
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n…(已截断)"
+        return {"ok": True, "content": text}
+
+    def list_workspace_preview(
+        self, rel_path: str = ".", *, max_entries: int = 500
+    ) -> dict[str, Any]:
+        """分屏目录预览：列出工作区内某相对目录的条目信息（名称/类型/大小/mtime），不读取文件内容。"""
+        self.ensure_session()
+        assert self._meta is not None
+        ws = (self._meta.workspace or "").strip()
+        if not ws:
+            return {"ok": False, "error": "工作区未设置。"}
+        root = Path(ws).expanduser().resolve()
+        if not root.is_dir():
+            return {"ok": False, "error": f"工作区不存在或不是目录: {root}"}
+        rel = (rel_path or ".").strip().replace("\\", "/") or "."
+        try:
+            target = safe_child(root, rel)
+        except ToolError as e:
+            return {"ok": False, "error": str(e)}
+        if not target.is_dir():
+            return {"ok": False, "error": f"不是目录或不存在: {rel}"}
+        try:
+            path_key = str(target.relative_to(root)).replace("\\", "/")
+        except ValueError:
+            path_key = ""
+        if path_key == ".":
+            path_key = ""
+        if not path_key:
+            parent_key: str | None = None
+        else:
+            parent = Path(path_key).parent
+            ps = str(parent).replace("\\", "/")
+            parent_key = "" if ps == "." else ps
+
+        entries: list[dict[str, Any]] = []
+        truncated = False
+        try:
+            children = sorted(target.iterdir(), key=lambda p: p.name.lower())
+        except OSError as e:
+            return {"ok": False, "error": f"列出失败: {e!s}"}
+        for c in children:
+            if len(entries) >= max_entries:
+                truncated = True
+                break
+            try:
+                st = c.stat()
+            except OSError:
+                continue
+            is_dir = c.is_dir()
+            mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+            entries.append(
+                {
+                    "name": c.name,
+                    "kind": "dir" if is_dir else "file",
+                    "size": None if is_dir else int(st.st_size),
+                    "mtime": mtime,
+                }
+            )
+        return {
+            "ok": True,
+            "path": path_key,
+            "parent": parent_key,
+            "entries": entries,
+            "truncated": truncated,
+        }
 
     def update_session(
         self,
