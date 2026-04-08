@@ -774,6 +774,33 @@ body.split-active .pane-secondary {
   line-height: 1.4;
 }
 
+.builtin-scheduler-list {
+  margin: 6px 0 10px;
+  font-size: 11px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.builtin-scheduler-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--bg-app);
+}
+
+.builtin-scheduler-row code {
+  flex: 1 1 12rem;
+  font-size: 10px;
+  word-break: break-all;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-muted);
+}
+
 .identity-path {
   display: block;
   font-size: 10px;
@@ -807,6 +834,137 @@ body.split-active .pane-secondary {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.session-scheduler-section {
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-app);
+}
+
+.session-scheduler-details {
+  font-size: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 8px 12px 12px;
+  background: var(--bg-panel);
+}
+
+.session-scheduler-summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-label);
+  list-style-position: inside;
+}
+
+.session-scheduler-lead {
+  margin: 8px 0 6px;
+}
+
+.session-scheduler-body.hidden {
+  display: none;
+}
+
+.task-runs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+
+.task-runs-overlay.hidden {
+  display: none;
+}
+
+.task-runs-overlay-inner {
+  width: min(960px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.task-runs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-app);
+}
+
+.task-runs-title {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.task-runs-sub {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  max-width: 42rem;
+}
+
+.task-runs-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.task-runs-table-wrap {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  padding: 8px 12px 16px;
+}
+
+.task-runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.task-runs-table th,
+.task-runs-table td {
+  border: 1px solid var(--border-input);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.task-runs-table th {
+  background: var(--bg-neutral-mid);
+  color: var(--text-label);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.task-runs-table code {
+  font-size: 10px;
+  word-break: break-all;
+}
+
+.task-runs-foot {
+  margin: 0;
+  padding: 8px 16px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-default);
 }
 
 .field {

@@ -27,6 +27,7 @@ from src.llm.ruyi72_identity_files import read_for_api, save_partial  # noqa: E4
 from src.agent.memory_auto_extract import start_memory_auto_extract_worker  # noqa: E402
 from src.scheduler import start_builtin_scheduler_worker  # noqa: E402
 from src.scheduler import crud as scheduler_crud  # noqa: E402
+from src.scheduler.runs_reader import list_task_run_entries  # noqa: E402
 from src.agent.memory_extractor import extract_and_store_from_text  # noqa: E402
 from src.agent.memory_tools import browse_memory_formatted  # noqa: E402
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
@@ -283,6 +284,10 @@ class Api:
         if not isinstance(payload, dict):
             return {"ok": False, "error": "无效请求"}
         return scheduler_crud.delete_task(self._svc, payload)
+
+    def list_scheduled_task_runs(self, payload: object = None) -> dict:
+        """只读聚合全局 global_task_runs.log 与各会话 task_runs.log（尾部）。"""
+        return list_task_run_entries(self._svc.store, self._cfg)
 
 
 def main() -> None:

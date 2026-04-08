@@ -612,6 +612,9 @@ class ConversationService:
                 root = Path(ws).expanduser().resolve()
                 if not root.is_dir():
                     return f"工作区不存在或不是目录: {root}"
+                sched_ctx = (
+                    (self, self._active_id) if self._active_id else None
+                )
                 with self.llm_busy():
                     ok, _out = run_react(
                         self._llm,
@@ -620,6 +623,7 @@ class ConversationService:
                         max_steps=self._meta.react_max_steps,
                         memory_bootstrap=memory_extra or None,
                         extra_system=self._kb_system_extra(),
+                        scheduler_context=sched_ctx,
                     )
                 if ok:
                     self._parse_action_card_on_last_assistant(self._messages)
@@ -867,6 +871,7 @@ class ConversationService:
 
         # ReAct 模式：历史中先追加用户消息，后续由 run_react 修改 messages 列表。
         self._messages.append({"role": "user", "content": text})
+        sched_ctx = (self, self._active_id) if self._active_id else None
         with self.llm_busy():
             ok, out = run_react(
                 self._llm,
@@ -875,6 +880,7 @@ class ConversationService:
                 max_steps=self._meta.react_max_steps,
                 memory_bootstrap=memory_extra or None,
                 extra_system=self._kb_system_extra(),
+                scheduler_context=sched_ctx,
             )
         if ok:
             self._parse_action_card_on_last_assistant(self._messages)

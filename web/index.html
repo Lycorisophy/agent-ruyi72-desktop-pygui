@@ -73,6 +73,9 @@
     <header class="header">
       <div class="header-top">
         <h1 class="title">如意72</h1>
+        <button type="button" id="btn-task-runs-view" class="btn btn-small btn-ghost" title="查看全局与会话的定时任务运行记录（只读）">
+          定时任务记录
+        </button>
         <label class="theme-select-field">
           <span>主题色</span>
           <select id="theme-select" class="theme-select" aria-label="页面主题">
@@ -173,6 +176,44 @@
         </div>
         <p id="identity-settings-status" class="settings-hint" role="status"></p>
       </details>
+      <details class="settings-details" id="builtin-scheduler-details">
+        <summary class="settings-summary">全局定时任务（高级）</summary>
+        <p class="settings-hint">全局任务仅在空闲时由后端调度；当前动作仅支持 noop。运行记录见「定时任务记录」。</p>
+        <div class="settings-form-grid" id="global-scheduler-create-form">
+          <label>
+            <span>触发器</span>
+            <select id="global-sched-trigger" class="field-input" aria-label="全局任务触发器类型">
+              <option value="interval_sec">间隔（秒）</option>
+              <option value="daily_at">每日时刻（本地 HH:MM）</option>
+            </select>
+          </label>
+          <label id="global-sched-interval-wrap">
+            <span>间隔秒数</span>
+            <input type="number" id="global-sched-interval" class="field-input narrow" min="30" max="604800" value="3600" />
+          </label>
+          <label id="global-sched-daily-wrap" class="hidden">
+            <span>时刻</span>
+            <input type="text" id="global-sched-daily" class="field-input narrow" placeholder="09:00" maxlength="5" />
+          </label>
+          <label>
+            <span>唤醒后遗漏</span>
+            <select id="global-sched-missed" class="field-input">
+              <option value="catch_up_once">补跑至多一次</option>
+              <option value="skip" selected>跳过遗漏</option>
+            </select>
+          </label>
+          <label class="field-row">
+            <input type="checkbox" id="global-sched-enabled" checked />
+            <span>启用</span>
+          </label>
+          <div class="settings-form-actions">
+            <button type="button" id="btn-global-sched-create" class="btn btn-small">添加全局任务</button>
+            <button type="button" id="btn-scheduler-refresh" class="btn btn-small btn-ghost">刷新列表</button>
+          </div>
+        </div>
+        <div id="builtin-scheduler-global" class="builtin-scheduler-list" role="region" aria-label="全局定时任务"></div>
+        <p id="builtin-scheduler-status" class="settings-hint" role="status"></p>
+      </details>
     </header>
     <section class="session-bar">
       <label class="field">
@@ -191,6 +232,70 @@
           <input type="number" id="react-steps" min="1" max="200" value="8" class="field-input narrow" />
         </label>
       </div>
+    </section>
+    <section class="session-scheduler-section" id="session-scheduler-section" aria-label="本会话定时任务">
+      <details class="session-scheduler-details" id="session-scheduler-details">
+        <summary class="session-scheduler-summary">本会话定时任务</summary>
+        <p class="settings-hint session-scheduler-lead">
+          绑定当前左侧选中的会话。ReAct 模式下可由模型通过工具 <code>save_session_scheduled_task</code> 创建。
+        </p>
+        <p id="session-scheduler-no-session" class="settings-hint hidden">请先选择一个会话。</p>
+        <div id="session-scheduler-body" class="session-scheduler-body">
+          <div class="settings-form-grid session-scheduler-form">
+            <label>
+              <span>触发器</span>
+              <select id="session-sched-trigger" class="field-input">
+                <option value="interval_sec">间隔（秒）</option>
+                <option value="daily_at">每日时刻</option>
+              </select>
+            </label>
+            <label id="session-sched-interval-wrap">
+              <span>间隔秒数</span>
+              <input type="number" id="session-sched-interval" class="field-input narrow" min="30" max="604800" value="3600" />
+            </label>
+            <label id="session-sched-daily-wrap" class="hidden">
+              <span>时刻 HH:MM</span>
+              <input type="text" id="session-sched-daily" class="field-input narrow" placeholder="09:00" maxlength="5" />
+            </label>
+            <label>
+              <span>动作</span>
+              <select id="session-sched-action" class="field-input">
+                <option value="noop">noop（仅记录）</option>
+                <option value="append_system_message">追加 system 消息</option>
+              </select>
+            </label>
+            <label id="session-sched-msg-wrap" class="hidden">
+              <span>消息正文</span>
+              <textarea id="session-sched-msg" class="field-input" rows="3" placeholder="触发时写入本会话"></textarea>
+            </label>
+            <label>
+              <span>结果落盘</span>
+              <select id="session-sched-persist" class="field-input">
+                <option value="messages">messages.json</option>
+                <option value="task_runs_log">task_runs.log</option>
+                <option value="both">两者</option>
+              </select>
+            </label>
+            <label>
+              <span>唤醒后遗漏</span>
+              <select id="session-sched-missed" class="field-input">
+                <option value="catch_up_once">补跑至多一次</option>
+                <option value="skip" selected>跳过遗漏</option>
+              </select>
+            </label>
+            <label class="field-row">
+              <input type="checkbox" id="session-sched-enabled" checked />
+              <span>启用</span>
+            </label>
+            <div class="settings-form-actions">
+              <button type="button" id="btn-session-sched-create" class="btn btn-small">添加任务</button>
+              <button type="button" id="btn-session-sched-refresh" class="btn btn-small btn-ghost">刷新列表</button>
+            </div>
+          </div>
+          <div id="session-scheduler-list" class="builtin-scheduler-list" role="region"></div>
+          <p id="session-scheduler-status" class="settings-hint" role="status"></p>
+        </div>
+      </details>
     </section>
     <div class="content-body">
       <div class="content-main-column">
@@ -330,6 +435,24 @@
         <button type="button" id="team-cancel" class="btn">取消</button>
         <button type="button" id="team-confirm" class="btn btn-primary">创建</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 定时任务运行记录（只读） -->
+  <div id="task-runs-overlay" class="task-runs-overlay hidden" aria-hidden="true">
+    <div class="task-runs-overlay-inner" role="document">
+      <header class="task-runs-head">
+        <div class="task-runs-head-text">
+          <h2 class="task-runs-title">定时任务运行记录</h2>
+          <p class="task-runs-sub">只读汇总（全局 <code>global_task_runs.log</code> 与各会话 <code>task_runs.log</code> 尾部）。</p>
+        </div>
+        <div class="task-runs-head-actions">
+          <button type="button" id="btn-task-runs-refresh" class="btn btn-small">刷新</button>
+          <button type="button" id="btn-task-runs-close" class="btn btn-small btn-ghost">关闭</button>
+        </div>
+      </header>
+      <div id="task-runs-table-wrap" class="task-runs-table-wrap"></div>
+      <p id="task-runs-status" class="task-runs-foot" role="status"></p>
     </div>
   </div>
 

@@ -115,10 +115,13 @@ flowchart LR
 
 ---
 
-## 8. API 与 UI（设计层）
+## 8. API 与 UI（已实现要点）
 
-- **配置入口（后续）**：可在设置页或会话侧栏增加「本会话定时任务」列表；全局任务在「高级设置」或 YAML。
-- **Api 方法（示意）**：`list_scheduled_tasks(scope)`、`save_scheduled_task(payload)`、`delete_scheduled_task(id)`；均需校验路径与会话存在性。
+- **设置 → 全局定时任务**：创建（当前仅 `noop`）、列表、删除；数据在 `~/.ruyi72/global_scheduled_tasks.json`。
+- **主界面「本会话定时任务」**（须先选中会话）：创建 `noop` / `append_system_message`、列表、删除；数据在 `sessions/<id>/scheduled_tasks.json`。
+- **「定时任务记录」**（全屏只读）：聚合 `~/.ruyi72/global_task_runs.log` 与各会话目录 `task_runs.log` 的**尾部**（扫描会话数受 `builtin_scheduler.max_sessions_scanned` 等限制）。
+- **Api**：`list_scheduled_tasks`、`save_scheduled_task`、`delete_scheduled_task`、`list_scheduled_task_runs`（只读，不写盘）。
+- **ReAct 工具**：`save_session_scheduled_task`（参数见 [`src/agent/react_lc.py`](../src/agent/react_lc.py)），固定绑定**当前会话 id**，模型不可改会话。
 
 ---
 
@@ -151,3 +154,20 @@ flowchart LR
 - **创建/编辑计划时的选项**：`missed_run_after_wake`：
   - **`catch_up_once`**：唤醒后**至多补跑 1 次**，再按规则计算下一次 `daily_at`；
   - **`skip`**：**不补跑**错过的触发，从唤醒后的下一次计划时刻继续（用户侧即「不跑」遗漏次数）。
+
+**实现说明（v1，[`src/scheduler/worker.py`](../src/scheduler/worker.py)）**
+
+- 未使用操作系统「休眠/唤醒」API；用**漏跑程度**区分「同一天略晚」与「跨日或多轮遗漏」，避免与「长时间非空闲不跑调度」混淆。
+- **`catch_up_once`**：不单独改期；到期任务照常至多执行一次，再由 `advance_next_run` 计算下次。
+- **`skip`**：仅当 `next_run_at` 已过期且判定为**多轮遗漏**时，**不执行**本轮，只把 `next_run_at` 推到下一次合理时刻：
+  - `daily_at`：若 `next_run_at` 与当前时刻在**本地日历日**上已不在同一天（跨日），则 `next_run_at =` 下一个本地 `HH:MM`（`next_fire_daily_at_local`）。
+  - `interval_sec`：若迟到时长 `≥ 2 × interval`，视为漏了至少两轮，则 `next_run_at = now + interval`。
+- 同一天内仅迟到数分钟～数小时的 `daily_at` 仍会补跑至多一次（与「略晚」一致）。
+
+---
+
+## 12. 运行记录（审计）
+
+- **全局**：[`src/scheduler/executor.py`](../src/scheduler/executor.py) 在执行全局 `noop` 时向 `~/.ruyi72/global_task_runs.log` 追加一行 JSON（与 [`append_global_task_runs_log`](../src/scheduler/persistence.py)）。
+- **会话**：同上文件在会话目录写 `task_runs.log`（当 `persist_output_to` 含 `task_runs_log` 或 `both` 时，noop/append 均可能写入，见 executor）。
+- **只读聚合**：[`src/scheduler/runs_reader.py`](../src/scheduler/runs_reader.py) 供 `list_scheduled_task_runs` 使用；不保证全量历史，仅尾部切片以便 UI 展示。

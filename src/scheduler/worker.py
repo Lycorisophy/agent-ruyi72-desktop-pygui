@@ -5,11 +5,16 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from src.config import BuiltinSchedulerConfig
 from src.scheduler.executor import execute_scheduled_task
-from src.scheduler.models import ScheduledTask, ScheduledTasksFile
+from src.scheduler.models import (
+    DailyAtTrigger,
+    IntervalTrigger,
+    ScheduledTask,
+    ScheduledTasksFile,
+)
 from src.scheduler.persistence import (
     load_global_tasks,
     load_session_tasks,
@@ -18,10 +23,81 @@ from src.scheduler.persistence import (
     upsert_task_in_file,
 )
 from src.scheduler.scheduling import advance_next_run, ensure_next_run
-from src.scheduler.timeutil import parse_iso_utc, to_iso_utc, utc_now
+from src.scheduler.timeutil import (
+    next_fire_daily_at_local,
+    parse_iso_utc,
+    to_iso_utc,
+    utc_now,
+)
 from src.service.conversation import ConversationService
 
 _LOG = logging.getLogger("ruyi72.scheduler")
+
+
+def _missed_enough_for_skip_policy(task: ScheduledTask, nxt: datetime, now: datetime) -> bool:
+    """判定是否属于「漏了多轮」而非同一天内略晚，供 missed_run_after_wake=skip 仅改期不执行。"""
+    tr = task.trigger
+    if isinstance(tr, DailyAtTrigger):
+        l_n = nxt.astimezone()
+        l_now = now.astimezone()
+        return l_n.date() < l_now.date()
+    if isinstance(tr, IntervalTrigger):
+        return (now - nxt).total_seconds() >= 2 * tr.value
+    return False
+
+
+def _maybe_reschedule_skip_missed(task: ScheduledTask, now: datetime) -> tuple[ScheduledTask, bool]:
+    """skip 策略：多轮遗漏时跳过执行，将 next_run_at 推到下一次合理时刻。"""
+    if task.missed_run_after_wake != "skip" or not task.enabled:
+        return task, False
+    nxt = parse_iso_utc(task.next_run_at)
+    if nxt is None or nxt >= now:
+        return task, False
+    if not _missed_enough_for_skip_policy(task, nxt, now):
+        return task, False
+    tr = task.trigger
+    if isinstance(tr, DailyAtTrigger):
+        new_nxt = to_iso_utc(next_fire_daily_at_local(tr.value, now))
+    elif isinstance(tr, IntervalTrigger):
+        new_nxt = to_iso_utc(now + timedelta(seconds=tr.value))
+    else:
+        return task, False
+    _LOG.debug(
+        "skip missed runs for task %s: next %s -> %s",
+        task.id[:8],
+        task.next_run_at,
+        new_nxt,
+    )
+    return task.model_copy(update={"next_run_at": new_nxt}), True
+
+
+def _apply_skip_policy_for_missed_tasks(
+    svc: ConversationService, cfg: BuiltinSchedulerConfig, now: datetime
+) -> None:
+    store = svc.store
+    data = load_global_tasks()
+    changed = False
+    tasks_out: list[ScheduledTask] = []
+    for t in data.tasks:
+        t2, ch = _maybe_reschedule_skip_missed(t, now)
+        tasks_out.append(t2)
+        changed = changed or ch
+    if changed:
+        save_global_tasks(ScheduledTasksFile(version=data.version, tasks=tasks_out))
+
+    for m in store.list_sessions()[: cfg.max_sessions_scanned]:
+        sf = load_session_tasks(store, m.id)
+        changed = False
+        tasks_out = []
+        for t in sf.tasks:
+            tt = t.model_copy(update={"session_id": m.id, "kind": "session"})
+            t2, ch = _maybe_reschedule_skip_missed(tt, now)
+            tasks_out.append(t2)
+            changed = changed or ch
+        if changed:
+            save_session_tasks(
+                store, m.id, ScheduledTasksFile(version=sf.version, tasks=tasks_out)
+            )
 
 
 def _fix_and_save_global() -> None:
@@ -72,6 +148,7 @@ def _collect_tasks(svc: ConversationService, max_sessions: int) -> list[Schedule
 def process_due_tasks(svc: ConversationService, cfg: BuiltinSchedulerConfig) -> None:
     store = svc.store
     now = utc_now()
+    _apply_skip_policy_for_missed_tasks(svc, cfg, now)
     all_tasks = _collect_tasks(svc, cfg.max_sessions_scanned)
 
     due: list[ScheduledTask] = []

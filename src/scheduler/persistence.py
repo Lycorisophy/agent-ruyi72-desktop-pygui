@@ -12,11 +12,26 @@ from src.storage.session_store import SessionStore
 _FILE_LOCK = threading.Lock()
 
 GLOBAL_REL = Path(".ruyi72") / "global_scheduled_tasks.json"
+GLOBAL_TASK_RUNS_NAME = "global_task_runs.log"
 SESSION_TASKS_NAME = "scheduled_tasks.json"
 
 
 def global_tasks_path() -> Path:
     return Path.home() / GLOBAL_REL
+
+
+def global_task_runs_path() -> Path:
+    return Path.home() / Path(".ruyi72") / GLOBAL_TASK_RUNS_NAME
+
+
+def append_global_task_runs_log(record: dict) -> None:
+    """追加一行 JSONL 到用户目录全局任务运行记录（与 executor 共用锁）。"""
+    p = global_task_runs_path()
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with _FILE_LOCK:
+        with p.open("a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def session_tasks_path(store: SessionStore, session_id: str) -> Path:

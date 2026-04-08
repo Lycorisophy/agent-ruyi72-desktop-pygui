@@ -1585,7 +1585,13 @@ async function renderSessionSearchResults(query) {
 }
 
 function applyMetaToForm(meta) {
-  if (!meta) return;
+  if (!meta) {
+    lastSessionMeta = null;
+    currentSessionId = null;
+    updateSessionSchedulerPanelVisibility();
+    void refreshSessionSchedulerPanel();
+    return;
+  }
   const prevId = lastSessionMeta && lastSessionMeta.id;
   lastSessionMeta = meta;
   currentSessionId = meta.id;
@@ -1605,6 +1611,8 @@ function applyMetaToForm(meta) {
     workspacePreviewCurrentPath = "";
   }
   refreshWorkspacePreviewIfSplitActive();
+  updateSessionSchedulerPanelVisibility();
+  void refreshSessionSchedulerPanel();
 }
 
 async function renderSessionList() {
@@ -1773,6 +1781,220 @@ function appendMessage(role, text, isError) {
   startTypewriter(body, text || "", gen);
 }
 
+function setBuiltinSchedulerStatus(msg) {
+  const st = document.getElementById("builtin-scheduler-status");
+  if (st) st.textContent = msg || "";
+}
+
+async function refreshAllSchedulerUIs() {
+  await refreshGlobalSchedulerList();
+  await refreshSessionSchedulerPanel();
+}
+
+function renderBuiltinSchedulerRows(container, tasks, kind, sessionId, onAfterDelete) {
+  container.innerHTML = "";
+  if (!tasks || !tasks.length) {
+    container.textContent = "（无）";
+    return;
+  }
+  const afterDel = typeof onAfterDelete === "function" ? onAfterDelete : null;
+  for (const t of tasks) {
+    const row = el("div", "builtin-scheduler-row");
+    const tr = t.trigger || {};
+    const ac = t.action || {};
+    const summary = `${t.enabled === false ? "[停] " : ""}${tr.type || "?"} ${
+      tr.value != null && tr.value !== "" ? String(tr.value) : ""
+    } → ${ac.type || "?"}`;
+    row.appendChild(el("span", "", summary));
+    const idc = document.createElement("code");
+    idc.textContent = t.id || "";
+    row.appendChild(idc);
+    const btn = el("button", "btn btn-small btn-ghost", "删除");
+    btn.type = "button";
+    btn.addEventListener("click", async () => {
+      if (!window.confirm("删除此定时任务？")) return;
+      const payload = { kind, task_id: t.id };
+      if (kind === "session" && sessionId) payload.session_id = sessionId;
+      try {
+        const r = await api().delete_scheduled_task(payload);
+        if (!r.ok) {
+          window.alert(r.error || "删除失败");
+          return;
+        }
+        if (afterDel) await afterDel();
+      } catch (e) {
+        window.alert(String(e));
+      }
+    });
+    row.appendChild(btn);
+    container.appendChild(row);
+  }
+}
+
+async function refreshGlobalSchedulerList() {
+  const gEl = document.getElementById("builtin-scheduler-global");
+  if (!gEl) return;
+  setBuiltinSchedulerStatus("");
+  try {
+    const gr = await api().list_scheduled_tasks({ kind: "global" });
+    gEl.innerHTML = "";
+    if (!gr.ok) {
+      gEl.textContent = gr.error || "加载失败";
+    } else {
+      renderBuiltinSchedulerRows(gEl, gr.tasks, "global", null, refreshAllSchedulerUIs);
+    }
+  } catch (e) {
+    setBuiltinSchedulerStatus(String(e));
+  }
+}
+
+async function refreshSessionSchedulerPanel() {
+  const sEl = document.getElementById("session-scheduler-list");
+  const st = document.getElementById("session-scheduler-status");
+  if (!sEl) return;
+  if (st) st.textContent = "";
+  if (!currentSessionId) {
+    sEl.textContent = "暂无选中会话。";
+    return;
+  }
+  try {
+    const sr = await api().list_scheduled_tasks({
+      kind: "session",
+      session_id: currentSessionId,
+    });
+    sEl.innerHTML = "";
+    if (!sr.ok) {
+      sEl.textContent = sr.error || "加载失败";
+    } else {
+      renderBuiltinSchedulerRows(
+        sEl,
+        sr.tasks,
+        "session",
+        currentSessionId,
+        refreshAllSchedulerUIs
+      );
+    }
+  } catch (e) {
+    if (st) st.textContent = String(e);
+  }
+}
+
+function updateSessionSchedulerPanelVisibility() {
+  const noSess = document.getElementById("session-scheduler-no-session");
+  const body = document.getElementById("session-scheduler-body");
+  if (!noSess || !body) return;
+  if (!currentSessionId) {
+    noSess.classList.remove("hidden");
+    body.classList.add("hidden");
+  } else {
+    noSess.classList.add("hidden");
+    body.classList.remove("hidden");
+  }
+}
+
+function toggleGlobalSchedTriggerFields() {
+  const sel = document.getElementById("global-sched-trigger");
+  const iw = document.getElementById("global-sched-interval-wrap");
+  const dw = document.getElementById("global-sched-daily-wrap");
+  if (!sel || !iw || !dw) return;
+  const v = sel.value;
+  iw.classList.toggle("hidden", v !== "interval_sec");
+  dw.classList.toggle("hidden", v !== "daily_at");
+}
+
+function toggleSessionSchedTriggerFields() {
+  const sel = document.getElementById("session-sched-trigger");
+  const iw = document.getElementById("session-sched-interval-wrap");
+  const dw = document.getElementById("session-sched-daily-wrap");
+  if (!sel || !iw || !dw) return;
+  const v = sel.value;
+  iw.classList.toggle("hidden", v !== "interval_sec");
+  dw.classList.toggle("hidden", v !== "daily_at");
+}
+
+function toggleSessionSchedActionFields() {
+  const sel = document.getElementById("session-sched-action");
+  const wrap = document.getElementById("session-sched-msg-wrap");
+  if (!sel || !wrap) return;
+  wrap.classList.toggle("hidden", sel.value !== "append_system_message");
+}
+
+function openTaskRunsView() {
+  const ov = document.getElementById("task-runs-overlay");
+  if (!ov) return;
+  ov.classList.remove("hidden");
+  ov.setAttribute("aria-hidden", "false");
+  void loadTaskRunsTable();
+}
+
+function closeTaskRunsView() {
+  const ov = document.getElementById("task-runs-overlay");
+  if (!ov) return;
+  ov.classList.add("hidden");
+  ov.setAttribute("aria-hidden", "true");
+}
+
+async function loadTaskRunsTable() {
+  const wrap = document.getElementById("task-runs-table-wrap");
+  const st = document.getElementById("task-runs-status");
+  if (!wrap) return;
+  if (st) st.textContent = "加载中…";
+  wrap.innerHTML = "";
+  try {
+    const res = await api().list_scheduled_task_runs();
+    if (!res.ok) {
+      if (st) st.textContent = res.error || "加载失败";
+      return;
+    }
+    const entries = res.entries || [];
+    if (!entries.length) {
+      wrap.textContent = "暂无记录。";
+      if (st) st.textContent = "";
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "task-runs-table";
+    table.innerHTML =
+      "<thead><tr>" +
+      "<th scope=\"col\">时间</th>" +
+      "<th scope=\"col\">范围</th>" +
+      "<th scope=\"col\">会话</th>" +
+      "<th scope=\"col\">task_id</th>" +
+      "<th scope=\"col\">动作</th>" +
+      "<th scope=\"col\">摘要 / 状态</th>" +
+      "</tr></thead><tbody></tbody>";
+    const tb = table.querySelector("tbody");
+    for (const e of entries) {
+      const tr = document.createElement("tr");
+      const scope = e.scope === "global" ? "全局" : "会话";
+      const sess =
+        e.scope === "session"
+          ? `${escapeHtml(e.session_title || "")} <code>${escapeHtml(
+              e.session_id || ""
+            )}</code>`
+          : "—";
+      const prev =
+        e.preview != null && String(e.preview) !== ""
+          ? escapeHtml(String(e.preview))
+          : e.ok === false
+            ? "失败"
+            : "ok";
+      tr.innerHTML =
+        `<td>${escapeHtml(e.ts || "")}</td>` +
+        `<td>${escapeHtml(scope)}</td>` +
+        `<td>${sess}</td>` +
+        `<td><code>${escapeHtml(e.task_id || "")}</code></td>` +
+        `<td>${escapeHtml(e.action || "")}</td>` +
+        `<td>${prev}</td>`;
+      tb.appendChild(tr);
+    }
+    wrap.appendChild(table);
+    if (st) st.textContent = `共 ${entries.length} 条（尾部汇总）`;
+  } catch (err) {
+    if (st) st.textContent = String(err);
+  }
+}
+
 function init() {
   window.__ruyiPersonaDispatch = dispatchPersonaEvent;
 
@@ -1804,6 +2026,168 @@ function init() {
   const btnIdentitySave = document.getElementById("btn-identity-save");
   if (btnIdentitySave) {
     btnIdentitySave.addEventListener("click", () => saveIdentityPromptsFromForm());
+  }
+
+  const gTrig = document.getElementById("global-sched-trigger");
+  if (gTrig) {
+    gTrig.addEventListener("change", () => toggleGlobalSchedTriggerFields());
+    toggleGlobalSchedTriggerFields();
+  }
+  const sTrig = document.getElementById("session-sched-trigger");
+  if (sTrig) {
+    sTrig.addEventListener("change", () => toggleSessionSchedTriggerFields());
+    toggleSessionSchedTriggerFields();
+  }
+  const sAct = document.getElementById("session-sched-action");
+  if (sAct) {
+    sAct.addEventListener("change", () => toggleSessionSchedActionFields());
+    toggleSessionSchedActionFields();
+  }
+
+  const btnGlobalSchedCreate = document.getElementById("btn-global-sched-create");
+  if (btnGlobalSchedCreate) {
+    btnGlobalSchedCreate.addEventListener("click", async () => {
+      const missed = document.getElementById("global-sched-missed");
+      const en = document.getElementById("global-sched-enabled");
+      const trig = document.getElementById("global-sched-trigger");
+      let trigger;
+      if (trig && trig.value === "daily_at") {
+        const hh = (document.getElementById("global-sched-daily") || {}).value || "09:00";
+        trigger = { type: "daily_at", value: String(hh).trim() || "09:00" };
+      } else {
+        let sec = parseInt(
+          (document.getElementById("global-sched-interval") || {}).value || "3600",
+          10
+        );
+        if (Number.isNaN(sec)) sec = 3600;
+        sec = Math.max(30, Math.min(sec, 604800));
+        trigger = { type: "interval_sec", value: sec };
+      }
+      const payload = {
+        kind: "global",
+        enabled: !!(en && en.checked),
+        trigger,
+        action: { type: "noop" },
+        missed_run_after_wake: missed ? missed.value : "skip",
+        run_when_session_inactive: true,
+        persist_output_to: "messages",
+      };
+      setBuiltinSchedulerStatus("");
+      try {
+        const r = await api().save_scheduled_task(payload);
+        if (!r.ok) {
+          setBuiltinSchedulerStatus(r.error || "保存失败");
+          return;
+        }
+        setBuiltinSchedulerStatus("已添加。");
+        await refreshGlobalSchedulerList();
+      } catch (e) {
+        setBuiltinSchedulerStatus(String(e));
+      }
+    });
+  }
+
+  const btnSessionSchedCreate = document.getElementById("btn-session-sched-create");
+  if (btnSessionSchedCreate) {
+    btnSessionSchedCreate.addEventListener("click", async () => {
+      const st = document.getElementById("session-scheduler-status");
+      if (!currentSessionId) {
+        if (st) st.textContent = "请先选择会话。";
+        return;
+      }
+      const missed = document.getElementById("session-sched-missed");
+      const en = document.getElementById("session-sched-enabled");
+      const trig = document.getElementById("session-sched-trigger");
+      const act = document.getElementById("session-sched-action");
+      const persist = document.getElementById("session-sched-persist");
+      let trigger;
+      if (trig && trig.value === "daily_at") {
+        const hh = (document.getElementById("session-sched-daily") || {}).value || "09:00";
+        trigger = { type: "daily_at", value: String(hh).trim() || "09:00" };
+      } else {
+        let sec = parseInt(
+          (document.getElementById("session-sched-interval") || {}).value || "3600",
+          10
+        );
+        if (Number.isNaN(sec)) sec = 3600;
+        sec = Math.max(30, Math.min(sec, 604800));
+        trigger = { type: "interval_sec", value: sec };
+      }
+      let action;
+      if (act && act.value === "append_system_message") {
+        const msg = (document.getElementById("session-sched-msg") || {}).value || "";
+        const t = String(msg).trim();
+        if (!t) {
+          if (st) st.textContent = "请填写消息正文。";
+          return;
+        }
+        action = { type: "append_system_message", text: t };
+      } else {
+        action = { type: "noop" };
+      }
+      const payload = {
+        kind: "session",
+        session_id: currentSessionId,
+        enabled: !!(en && en.checked),
+        trigger,
+        action,
+        missed_run_after_wake: missed ? missed.value : "skip",
+        run_when_session_inactive: true,
+        persist_output_to: persist ? persist.value : "messages",
+      };
+      if (st) st.textContent = "";
+      try {
+        const r = await api().save_scheduled_task(payload);
+        if (!r.ok) {
+          if (st) st.textContent = r.error || "保存失败";
+          return;
+        }
+        if (st) st.textContent = "已添加。";
+        await refreshSessionSchedulerPanel();
+      } catch (e) {
+        if (st) st.textContent = String(e);
+      }
+    });
+  }
+
+  const btnSessionSchedRefresh = document.getElementById("btn-session-sched-refresh");
+  if (btnSessionSchedRefresh) {
+    btnSessionSchedRefresh.addEventListener("click", () => {
+      void refreshSessionSchedulerPanel();
+    });
+  }
+
+  const btnSchedulerRefresh = document.getElementById("btn-scheduler-refresh");
+  const schDetails = document.getElementById("builtin-scheduler-details");
+  if (btnSchedulerRefresh) {
+    btnSchedulerRefresh.addEventListener("click", () => {
+      void refreshGlobalSchedulerList();
+    });
+  }
+  if (schDetails) {
+    schDetails.addEventListener("toggle", () => {
+      if (schDetails.open) void refreshGlobalSchedulerList();
+    });
+  }
+
+  const sessSchDetails = document.getElementById("session-scheduler-details");
+  if (sessSchDetails) {
+    sessSchDetails.addEventListener("toggle", () => {
+      if (sessSchDetails.open) void refreshSessionSchedulerPanel();
+    });
+  }
+
+  const btnTaskRuns = document.getElementById("btn-task-runs-view");
+  if (btnTaskRuns) {
+    btnTaskRuns.addEventListener("click", () => openTaskRunsView());
+  }
+  const btnTaskRunsClose = document.getElementById("btn-task-runs-close");
+  if (btnTaskRunsClose) {
+    btnTaskRunsClose.addEventListener("click", () => closeTaskRunsView());
+  }
+  const btnTaskRunsRefresh = document.getElementById("btn-task-runs-refresh");
+  if (btnTaskRunsRefresh) {
+    btnTaskRunsRefresh.addEventListener("click", () => void loadTaskRunsTable());
   }
 
   const btnLlmSave = document.getElementById("btn-llm-save");
@@ -2013,6 +2397,11 @@ function init() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const taskOv = document.getElementById("task-runs-overlay");
+    if (taskOv && !taskOv.classList.contains("hidden")) {
+      closeTaskRunsView();
+      return;
+    }
     const loading = document.getElementById("global-loading");
     if (loading && !loading.classList.contains("hidden")) return;
     const kbOv = document.getElementById("kb-modal-overlay");

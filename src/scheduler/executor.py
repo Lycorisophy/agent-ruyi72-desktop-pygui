@@ -12,6 +12,7 @@ from src.scheduler.models import (
     NoopAction,
     ScheduledTask,
 )
+from src.scheduler.persistence import append_global_task_runs_log
 from src.scheduler.timeutil import to_iso_utc, utc_now
 
 if TYPE_CHECKING:
@@ -46,6 +47,14 @@ def execute_scheduled_task(
             return False, "全局任务暂不支持 append_system_message"
         if isinstance(task.action, NoopAction):
             _LOG.info("scheduler noop global task=%s", task.id[:8])
+            append_global_task_runs_log(
+                {
+                    "ts": now_iso,
+                    "task_id": task.id,
+                    "action": "noop",
+                    "ok": True,
+                }
+            )
             return True, None
         return False, "未知动作"
 
