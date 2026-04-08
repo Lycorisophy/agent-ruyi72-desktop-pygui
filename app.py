@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +25,40 @@ class Api:
     def __init__(self, svc: ConversationService, cfg: RuyiConfig) -> None:
         self._svc = svc
         self._cfg = cfg
+        self._window: object | None = None
+
+    def set_window(self, window: object | None) -> None:
+        """注入主窗口，用于拟人模式 evaluate_js 推送事件。"""
+        self._window = window
+
+        def emit(evt: dict) -> None:
+            w = self._window
+            if w is None:
+                return
+            try:
+                inner = json.dumps(evt, ensure_ascii=False)
+                js = (
+                    "window.__ruyiPersonaEvent && window.__ruyiPersonaEvent("
+                    + json.dumps(inner)
+                    + ")"
+                )
+                w.evaluate_js(js)  # type: ignore[union-attr]
+            except Exception:
+                pass
+
+        self._svc.set_persona_emit(emit)
+
+    def persona_send(self, text: str) -> dict:
+        return self._svc.persona_send(text or "")
+
+    def persona_interrupt(self) -> dict:
+        return self._svc.persona_interrupt()
+
+    def persona_resume(self) -> dict:
+        return self._svc.persona_resume()
+
+    def persona_pause(self, reason: str | None = None) -> dict:
+        return self._svc.persona_pause(reason or "")
 
     def send_message(self, text: str) -> dict:
         ok, message, append_error = self._svc.send_message(text)
@@ -35,6 +70,7 @@ class Api:
         tm = len(self._cfg.team.models)
         # 至少 2 个槽位才允许团队会话；M=1 时 team_max_agents 须为 0，避免前端误判
         team_max_agents = min(4, tm) if tm >= 2 else 0
+        per = self._cfg.persona
         return {
             "title": self._cfg.app.title,
             "model": llm.model,
@@ -46,6 +82,10 @@ class Api:
             "sessions_root": str(resolve_sessions_root(self._cfg)),
             "team_model_count": tm,
             "team_max_agents": team_max_agents,
+            "persona_stream_think": per.stream_think,
+            "persona_proactive_enabled": per.proactive_enabled,
+            "persona_proactive_idle_seconds": per.proactive_idle_seconds,
+            "persona_proactive_max_per_day": per.proactive_max_per_day,
         }
 
     def list_sessions(self) -> list:
@@ -74,6 +114,26 @@ class Api:
             workspace=p.get("workspace"),
             mode=p.get("mode"),
             react_max_steps=p.get("react_max_steps"),
+        )
+
+    def rename_session(self, session_id: str, title: str) -> dict:
+        return self._svc.rename_session(session_id or "", title or "")
+
+    def delete_session(self, session_id: str) -> dict:
+        return self._svc.delete_session(session_id or "")
+
+    def submit_action_card(
+        self,
+        card_id: str,
+        action: str,
+        selected_ids: list | None = None,
+        from_timeout: bool = False,
+    ) -> dict:
+        return self._svc.submit_action_card(
+            card_id or "",
+            action or "",
+            selected_ids,
+            from_timeout=bool(from_timeout),
         )
 
     def extract_memory(self, text: str) -> dict:
@@ -113,13 +173,14 @@ def main() -> None:
     api = Api(svc, cfg)
     index = ROOT / "web" / "index.html"
     url = index.resolve().as_uri()
-    webview.create_window(
+    win = webview.create_window(
         cfg.app.title,
         url,
         width=cfg.app.width,
         height=cfg.app.height,
         js_api=api,
     )
+    api.set_window(win)
     webview.start()
 
 

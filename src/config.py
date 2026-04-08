@@ -41,6 +41,15 @@ class AgentConfig(BaseModel):
     react_max_steps_default: int = Field(default=8, ge=1, le=200)
 
 
+class PersonaConfig(BaseModel):
+    """拟人模式：流式、可选流式推理、主动发言等。"""
+
+    stream_think: bool = Field(default=True, description="native 模式下是否向 Ollama 请求 think 流")
+    proactive_enabled: bool = False
+    proactive_idle_seconds: float = Field(default=120.0, ge=30.0, le=86400.0)
+    proactive_max_per_day: int = Field(default=5, ge=0, le=100)
+
+
 class TeamModelEntry(BaseModel):
     """团队链路槽位：顺序对应 A1、A2…；与顶层 llm 合并后仅 model 不同。"""
 
@@ -83,6 +92,7 @@ class RuyiConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    persona: PersonaConfig = Field(default_factory=PersonaConfig)
     team: TeamConfig = Field(default_factory=TeamConfig)
 
 

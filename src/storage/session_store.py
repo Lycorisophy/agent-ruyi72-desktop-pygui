@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-Mode = Literal["chat", "react"]
+from src.agent.action_card import sanitize_card_from_storage
+
+Mode = Literal["chat", "react", "persona"]
 SessionVariant = Literal["standard", "team"]
 
 
@@ -51,6 +54,24 @@ class SessionStore:
 
     def _session_dir(self, session_id: str) -> Path:
         return self._root / session_id
+
+    def _resolved_session_dir(self, session_id: str) -> Path:
+        sid = (session_id or "").strip()
+        if not sid or Path(sid).name != sid:
+            raise ValueError("无效的会话 id")
+        root = self._root.resolve()
+        d = (self._root / sid).resolve()
+        try:
+            d.relative_to(root)
+        except ValueError:
+            raise ValueError("无效的会话 id") from None
+        return d
+
+    def delete_session(self, session_id: str) -> None:
+        d = self._resolved_session_dir(session_id)
+        if not d.is_dir():
+            raise FileNotFoundError(session_id)
+        shutil.rmtree(d)
 
     def create_session(
         self,
@@ -125,7 +146,21 @@ class SessionStore:
         out.sort(key=lambda m: m.updated_at or "", reverse=True)
         return out
 
-    def load(self, session_id: str) -> tuple[SessionMeta, list[dict[str, str]]]:
+    def _normalize_stored_message(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        role = item.get("role")
+        if role not in ("user", "assistant", "system"):
+            return None
+        c = item.get("content")
+        if not isinstance(c, str):
+            return None
+        msg: dict[str, Any] = {"role": role, "content": c}
+        if role == "assistant" and "card" in item:
+            card = sanitize_card_from_storage(item.get("card"))
+            if card is not None:
+                msg["card"] = card
+        return msg
+
+    def load(self, session_id: str) -> tuple[SessionMeta, list[dict[str, Any]]]:
         d = self._session_dir(session_id)
         if not d.is_dir():
             raise FileNotFoundError(session_id)
@@ -134,19 +169,19 @@ class SessionStore:
             raise FileNotFoundError(session_id)
         meta = SessionMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
         msg_path = d / "messages.json"
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         if msg_path.is_file():
             raw = json.loads(msg_path.read_text(encoding="utf-8"))
             arr = raw.get("messages") if isinstance(raw, dict) else None
             if isinstance(arr, list):
                 for item in arr:
-                    if isinstance(item, dict) and item.get("role") in ("user", "assistant", "system"):
-                        c = item.get("content")
-                        if isinstance(c, str):
-                            messages.append({"role": item["role"], "content": c})
+                    if isinstance(item, dict):
+                        norm = self._normalize_stored_message(item)
+                        if norm is not None:
+                            messages.append(norm)
         return meta, messages
 
-    def save_messages(self, session_id: str, messages: list[dict[str, str]]) -> None:
+    def save_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         d = self._session_dir(session_id)
         if not d.is_dir():
             raise FileNotFoundError(session_id)
@@ -166,7 +201,7 @@ class SessionStore:
         mode: Mode | None = None,
         react_max_steps: int | None = None,
     ) -> SessionMeta:
-        d = self._session_dir(session_id)
+        d = self._resolved_session_dir(session_id)
         meta_path = d / "meta.json"
         if not meta_path.is_file():
             raise FileNotFoundError(session_id)
@@ -194,7 +229,7 @@ class SessionStore:
             encoding="utf-8",
         )
 
-    def _write_messages(self, d: Path, messages: list[dict[str, str]]) -> None:
+    def _write_messages(self, d: Path, messages: list[dict[str, Any]]) -> None:
         payload = {"messages": messages}
         (d / "messages.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),

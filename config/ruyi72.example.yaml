@@ -28,3 +28,10 @@ storage:
 # 新建会话时 ReAct 默认最大步数
 agent:
   react_max_steps_default: 8
+
+# 拟人模式：流式输出、可打断；主动发言需显式开启
+persona:
+  stream_think: true
+  proactive_enabled: false
+  proactive_idle_seconds: 120
+  proactive_max_per_day: 5

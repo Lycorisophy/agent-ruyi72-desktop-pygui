@@ -51,6 +51,26 @@ SAFETY_PROMPT = """
 """.strip()
 
 
+ACTION_CARD_SYSTEM_HINT = """
+【交互卡片 action_card（可选）】
+当需要用户在界面上确认一组带默认建议的选项时（例如即将执行的操作、参数开关），可在回复**末尾**附加一个单独的代码块，语言标记为 action_card，内容为 JSON（v=1），例如：
+
+```action_card
+{"v": 1, "title": "即将执行", "body": "说明文字", "countdown_sec": 60, "options": [{"id": "dry", "label": "仅 Dry-run", "default": true}, {"id": "apply", "label": "实际写入", "default": false}]}
+```
+
+要求：
+- 仅当确实需要用户确认时使用；普通问答不要带卡片。
+- title / body 为简短中文；options 至少 1 项，id 为短键（英文或拼音），label 为展示文案；default 为 true 表示建议默认勾选（可多选）。
+- countdown_sec 可选，范围 10～600，默认 60；超时将按当前勾选自动确认。
+- 代码块外请保留面向用户的可读说明；JSON 内不要放敏感密钥。
+""".strip()
+
+
+def action_card_system_hint() -> str:
+    return ACTION_CARD_SYSTEM_HINT
+
+
 def build_system_block(extra_system: str | None = None) -> str:
     """
     组合三段固定提示词 + 可选额外系统提示（例如技能列表、ReAct 工作区说明）。

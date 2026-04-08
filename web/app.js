@@ -114,6 +114,327 @@ let teamMaxAgents = 0;
 /** 递增后可使进行中的打字机动画停止（避免切换会话时旧动画写新 DOM） */
 let messageRenderGen = 0;
 
+const LS_SESSION_SORT = "ruyi72_sessionSort";
+const LS_SESSION_GROUP = "ruyi72_sessionGroup";
+
+const SORT_UPDATED_DESC = "updated_desc";
+const SORT_TITLE_ASC = "title_asc";
+const SORT_TITLE_DESC = "title_desc";
+const SORT_ID_ASC = "id_asc";
+
+const GROUP_NONE = "none";
+const GROUP_TYPE = "type";
+const GROUP_TIME = "time";
+
+const SESSION_SORT_MODES = [
+  SORT_UPDATED_DESC,
+  SORT_TITLE_ASC,
+  SORT_TITLE_DESC,
+  SORT_ID_ASC,
+];
+const SESSION_GROUP_MODES = [GROUP_NONE, GROUP_TYPE, GROUP_TIME];
+
+function getSessionSortMode() {
+  try {
+    const v = localStorage.getItem(LS_SESSION_SORT);
+    if (SESSION_SORT_MODES.includes(v)) return v;
+  } catch (_) {
+    /* ignore */
+  }
+  return SORT_UPDATED_DESC;
+}
+
+function getSessionGroupMode() {
+  try {
+    const v = localStorage.getItem(LS_SESSION_GROUP);
+    if (SESSION_GROUP_MODES.includes(v)) return v;
+  } catch (_) {
+    /* ignore */
+  }
+  return GROUP_NONE;
+}
+
+function applySavedSessionListPrefs() {
+  const sortEl = document.getElementById("session-sort");
+  const groupEl = document.getElementById("session-group");
+  if (sortEl) sortEl.value = getSessionSortMode();
+  if (groupEl) groupEl.value = getSessionGroupMode();
+}
+
+function sessionDisplayTitle(s) {
+  return String((s.title || s.id || "").trim() || s.id);
+}
+
+function sortSessions(list, mode) {
+  const arr = list.slice();
+  const zh = "zh-CN";
+  if (mode === SORT_TITLE_ASC) {
+    arr.sort((a, b) =>
+      sessionDisplayTitle(a).localeCompare(sessionDisplayTitle(b), zh)
+    );
+  } else if (mode === SORT_TITLE_DESC) {
+    arr.sort((a, b) =>
+      sessionDisplayTitle(b).localeCompare(sessionDisplayTitle(a), zh)
+    );
+  } else if (mode === SORT_ID_ASC) {
+    arr.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  } else {
+    arr.sort((a, b) => {
+      const ta = String(a.updated_at || "");
+      const tb = String(b.updated_at || "");
+      return tb.localeCompare(ta);
+    });
+  }
+  return arr;
+}
+
+function parseSessionUpdatedMs(s) {
+  const t = Date.parse(s.updated_at || "");
+  return Number.isNaN(t) ? null : t;
+}
+
+function sessionTimeBucket(s, nowMs) {
+  const t = parseSessionUpdatedMs(s);
+  if (t == null) return "earlier";
+  const now = nowMs ?? Date.now();
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const sod = startOfToday.getTime();
+  if (t >= sod) return "today";
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+  if (t >= sevenDaysAgo) return "week";
+  return "earlier";
+}
+
+function groupSessions(sorted, mode) {
+  if (mode === GROUP_NONE) {
+    return [{ label: "", items: sorted }];
+  }
+  if (mode === GROUP_TYPE) {
+    const team = sorted.filter((s) => s.session_variant === "team");
+    const std = sorted.filter((s) => s.session_variant !== "team");
+    const out = [];
+    if (team.length) out.push({ label: "团队", items: team });
+    if (std.length) out.push({ label: "普通", items: std });
+    if (!out.length) out.push({ label: "", items: [] });
+    return out;
+  }
+  const nowMs = Date.now();
+  const today = [];
+  const week = [];
+  const earlier = [];
+  for (const s of sorted) {
+    const b = sessionTimeBucket(s, nowMs);
+    if (b === "today") today.push(s);
+    else if (b === "week") week.push(s);
+    else earlier.push(s);
+  }
+  const out = [];
+  if (today.length) out.push({ label: "今天", items: today });
+  if (week.length) out.push({ label: "近 7 天", items: week });
+  if (earlier.length) out.push({ label: "更早", items: earlier });
+  if (!out.length) out.push({ label: "", items: [] });
+  return out;
+}
+
+/**
+ * @param {object} s
+ * @param {HTMLUListElement} parentUl
+ */
+function appendSessionRow(s, parentUl) {
+  const li = el("li", "session-item");
+  li.dataset.id = s.id;
+  if (s.id === currentSessionId) li.classList.add("active");
+
+  const body = el("div", "session-item-body");
+  const t = el("div", "session-item-title", s.title || s.id);
+  let subLine = `${s.mode || "chat"} · ${(s.updated_at || "").slice(0, 19)}`;
+  if (s.session_variant === "team" && s.team_size != null) {
+    subLine = `团队·${s.team_size} · ${subLine}`;
+  }
+  const sub = el("div", "session-item-meta", subLine);
+  body.appendChild(t);
+  body.appendChild(sub);
+  body.addEventListener("click", () => openSession(s.id));
+
+  const actions = el("div", "session-item-actions");
+  const btnRename = el("button", "btn-session-action", "重命名");
+  btnRename.type = "button";
+  btnRename.title = "重命名";
+  btnRename.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    const cur = (s.title || s.id || "").trim() || s.id;
+    const name = window.prompt("会话标题", cur);
+    if (name === null) return;
+    const next = name.trim();
+    if (!next) return;
+    try {
+      const res = await api().rename_session(s.id, next);
+      if (!res.ok) {
+        window.alert(res.error || "重命名失败");
+        return;
+      }
+      if (res.meta && s.id === currentSessionId) {
+        applyMetaToForm(res.meta);
+      }
+      await renderSessionList();
+    } catch (err) {
+      window.alert("重命名失败：" + String(err));
+    }
+  });
+
+  const btnDel = el("button", "btn-session-action", "删除");
+  btnDel.type = "button";
+  btnDel.title = "删除会话";
+  btnDel.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    if (!window.confirm("确定删除此会话？将删除该会话目录及历史。")) return;
+    try {
+      const res = await api().delete_session(s.id);
+      if (res && res.ok === false && res.error) {
+        window.alert(res.error);
+        return;
+      }
+      if (res.meta != null && res.messages != null) {
+        applyMetaToForm(res.meta);
+        renderMessages(res.messages, { instant: true });
+      }
+      await renderSessionList();
+    } catch (err) {
+      window.alert("删除失败：" + String(err));
+    }
+  });
+
+  actions.appendChild(btnRename);
+  actions.appendChild(btnDel);
+  li.appendChild(body);
+  li.appendChild(actions);
+  parentUl.appendChild(li);
+}
+
+/** 拟人模式流式 UI */
+let personaStreamWrap = null;
+let personaThinkingEl = null;
+let personaContentEl = null;
+let personaTurnActive = false;
+
+function scrollMessagesToEnd() {
+  const box = document.getElementById("messages");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+function personaResetStreamDom() {
+  personaStreamWrap = null;
+  personaThinkingEl = null;
+  personaContentEl = null;
+  personaTurnActive = false;
+}
+
+function dispatchPersonaEvent(evt) {
+  if (!evt || !evt.type) return;
+  const box = document.getElementById("messages");
+  const t = evt.type;
+
+  if (t === "turn.started") {
+    messageRenderGen += 1;
+    personaResetStreamDom();
+    removeEmptyPlaceholderIfAny(box);
+    appendMessageInstant("user", evt.user_text || "", false);
+    const wrap = document.createElement("div");
+    wrap.className = "msg-wrap msg-wrap-assistant persona-stream-wrap";
+    wrap.dataset.turnId = String(evt.turn_id != null ? evt.turn_id : "");
+    const body = document.createElement("div");
+    body.className = "msg msg-body msg-assistant persona-stream-body";
+    const think = document.createElement("div");
+    think.className = "persona-thinking";
+    think.hidden = true;
+    const content = document.createElement("div");
+    content.className = "persona-content";
+    body.appendChild(think);
+    body.appendChild(content);
+    const row = document.createElement("div");
+    row.className = "msg-copy-row";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-msg-copy";
+    btn.textContent = "全部复制";
+    btn.disabled = true;
+    btn.addEventListener("click", async () => {
+      const parts = [
+        think.textContent || "",
+        content.textContent || "",
+      ].filter(Boolean);
+      const txt = parts.join(parts.length > 1 ? "\n\n" : "");
+      try {
+        await copyToClipboard(txt);
+        const prev = btn.textContent;
+        btn.textContent = "已复制";
+        setTimeout(() => {
+          btn.textContent = prev;
+        }, 1200);
+      } catch (_) {
+        /* ignore */
+      }
+    });
+    row.appendChild(btn);
+    wrap.appendChild(body);
+    wrap.appendChild(row);
+    box.appendChild(wrap);
+    personaStreamWrap = wrap;
+    personaThinkingEl = think;
+    personaContentEl = content;
+    personaTurnActive = true;
+    scrollMessagesToEnd();
+    return;
+  }
+
+  if (t === "token.delta" && personaTurnActive) {
+    if (evt.channel === "thinking" && personaThinkingEl) {
+      personaThinkingEl.hidden = false;
+      personaThinkingEl.textContent += evt.text || "";
+    } else if (evt.channel === "content" && personaContentEl) {
+      personaContentEl.textContent += evt.text || "";
+    }
+    scrollMessagesToEnd();
+    return;
+  }
+
+  if (t === "error") {
+    appendMessage("assistant", evt.message || "错误", true);
+    personaTurnActive = false;
+    if (personaStreamWrap) {
+      personaStreamWrap.classList.add("persona-stream-error");
+      const btn = personaStreamWrap.querySelector(".btn-msg-copy");
+      if (btn) btn.disabled = false;
+    }
+    personaResetStreamDom();
+    refreshActive().catch(() => {});
+    return;
+  }
+
+  if (t === "agent.proactive") {
+    removeEmptyPlaceholderIfAny(box);
+    appendMessageInstant("assistant", evt.text || "", false);
+    scrollMessagesToEnd();
+    return;
+  }
+
+  if (t === "turn.cancelled" && personaStreamWrap) {
+    personaStreamWrap.classList.add("persona-interrupted");
+  }
+
+  if (t === "message.final" && personaStreamWrap) {
+    const btn = personaStreamWrap.querySelector(".btn-msg-copy");
+    if (btn) btn.disabled = false;
+  }
+
+  if (t === "turn.finished") {
+    personaTurnActive = false;
+    personaResetStreamDom();
+    refreshActive().catch(() => {});
+  }
+}
+
 function normalizeWorkspaceInput(raw) {
   let s = (raw || "").trim();
   if (!s) return "";
@@ -171,6 +492,7 @@ function updateTeamModeUi(meta) {
     if (isTeam) {
       r.disabled = true;
       if (r.value === "react") r.checked = false;
+      if (r.value === "persona") r.checked = false;
       if (r.value === "chat") r.checked = true;
     } else {
       r.disabled = false;
@@ -178,6 +500,15 @@ function updateTeamModeUi(meta) {
   });
   const steps = document.getElementById("react-steps");
   if (steps) steps.disabled = !!isTeam;
+  updatePersonaComposerUi(meta);
+}
+
+function updatePersonaComposerUi(meta) {
+  const m = meta || lastSessionMeta;
+  const isPersona =
+    m && m.mode === "persona" && m.session_variant !== "team";
+  const btn = document.getElementById("btn-persona-interrupt");
+  if (btn) btn.classList.toggle("hidden", !isPersona);
 }
 
 function openTeamModal() {
@@ -206,6 +537,232 @@ function closeTeamModal() {
   if (!overlay) return;
   overlay.classList.add("hidden");
   overlay.setAttribute("aria-hidden", "true");
+}
+
+function copyActionCardSummary(content, card) {
+  const parts = [];
+  if (content) parts.push(content);
+  if (card && Array.isArray(card.options)) {
+    const lines = card.options.map((o) => {
+      const mark = o.default ? "[建议] " : "";
+      return `${mark}${o.label || o.id}`;
+    });
+    parts.push("[选项]\n" + lines.join("\n"));
+  }
+  return parts.join("\n\n");
+}
+
+function formatCardStatusLabel(card) {
+  const s = card && card.status;
+  if (s === "confirmed") return "已确认";
+  if (s === "rejected") return "已拒绝";
+  if (s === "expired") return "已超时自动确认";
+  if (s === "superseded") return "已由新卡片替代";
+  return s || "";
+}
+
+/**
+ * @param {object} m
+ * @param {HTMLElement} box
+ * @param {boolean} instant
+ * @param {number} gen
+ */
+function appendAssistantMessage(m, box, instant, gen) {
+  const card = m.card;
+  const text = m.content || "";
+  if (!card) {
+    const { wrap, body } = createMessageBubble("assistant", false, {
+      initialText: instant ? text : undefined,
+    });
+    box.appendChild(wrap);
+    if (!instant) startTypewriter(body, text, gen);
+    return;
+  }
+
+  const wrap = el("div", "msg-wrap msg-wrap-assistant");
+  if (text) {
+    const tb = el(
+      "div",
+      "msg msg-body msg-assistant",
+      instant ? text : undefined
+    );
+    wrap.appendChild(tb);
+    if (!instant) startTypewriter(tb, text, gen);
+  }
+
+  const cardRoot = el("div", "msg-action-card");
+
+  if (card.status === "pending") {
+    cardRoot.classList.add("msg-action-card-pending");
+    cardRoot.appendChild(
+      el("div", "msg-action-card-title", card.title || "请确认")
+    );
+    if (card.body) {
+      cardRoot.appendChild(el("div", "msg-action-card-body", card.body));
+    }
+    const optsBox = el("div", "msg-action-card-options");
+    /** @type {HTMLInputElement[]} */
+    const checks = [];
+    (card.options || []).forEach((o) => {
+      const row = el("label", "msg-action-card-option");
+      const inp = document.createElement("input");
+      inp.type = "checkbox";
+      inp.value = String(o.id || "");
+      inp.checked = !!o.default;
+      checks.push(inp);
+      row.appendChild(inp);
+      row.appendChild(document.createTextNode(" "));
+      row.appendChild(el("span", "msg-action-card-option-label", o.label || o.id));
+      optsBox.appendChild(row);
+    });
+    cardRoot.appendChild(optsBox);
+
+    const countdown = el("div", "msg-action-card-countdown", "");
+    const actions = el("div", "msg-action-card-actions");
+    const btnOk = el("button", "btn btn-small btn-primary", "确认");
+    btnOk.type = "button";
+    const btnNo = el("button", "btn btn-small", "拒绝");
+    btnNo.type = "button";
+    actions.appendChild(btnOk);
+    actions.appendChild(btnNo);
+    cardRoot.appendChild(countdown);
+    cardRoot.appendChild(actions);
+
+    function gatherIds() {
+      return checks.filter((c) => c.checked).map((c) => c.value);
+    }
+    function lock() {
+      btnOk.disabled = true;
+      btnNo.disabled = true;
+      checks.forEach((c) => {
+        c.disabled = true;
+      });
+    }
+
+    let settled = false;
+    /** @type {ReturnType<typeof setInterval> | null} */
+    let iv = null;
+    function settle() {
+      if (settled) return;
+      settled = true;
+      if (iv != null) {
+        clearInterval(iv);
+        iv = null;
+      }
+      lock();
+    }
+
+    async function submitCard(action, ids, fromTimeout) {
+      settle();
+      try {
+        const res = await api().submit_action_card(
+          card.id,
+          action,
+          ids,
+          !!fromTimeout
+        );
+        if (!res.ok) {
+          window.alert(res.error || "提交失败");
+          await refreshActive();
+          return;
+        }
+        if (res.meta) applyMetaToForm(res.meta);
+        if (res.messages) renderMessages(res.messages, { instant: true });
+        await renderSessionList();
+      } catch (e) {
+        window.alert(String(e));
+        await refreshActive();
+      }
+    }
+
+    btnOk.addEventListener("click", () => {
+      submitCard("confirm", gatherIds(), false);
+    });
+    btnNo.addEventListener("click", () => {
+      submitCard("reject", [], false);
+    });
+
+    const total = Math.max(
+      10,
+      Math.min(600, Number(card.countdown_sec) || 60)
+    );
+    let remaining = total;
+    function tickCountdown() {
+      if (gen !== messageRenderGen) return;
+      if (remaining <= 0) {
+        if (iv != null) {
+          clearInterval(iv);
+          iv = null;
+        }
+        countdown.textContent = "正在确认…";
+        submitCard("confirm", gatherIds(), true);
+        return;
+      }
+      countdown.textContent = `${remaining} 秒后按当前勾选自动确认`;
+      remaining -= 1;
+    }
+    tickCountdown();
+    iv = setInterval(tickCountdown, 1000);
+  } else {
+    cardRoot.classList.add("msg-action-card-resolved");
+    cardRoot.appendChild(
+      el("div", "msg-action-card-title", card.title || "确认项")
+    );
+    if (card.body) {
+      cardRoot.appendChild(el("div", "msg-action-card-body", card.body));
+    }
+    const st = el(
+      "div",
+      "msg-action-card-status",
+      formatCardStatusLabel(card)
+    );
+    cardRoot.appendChild(st);
+    if (card.resolved_at) {
+      cardRoot.appendChild(
+        el(
+          "div",
+          "msg-action-card-meta",
+          (card.resolved_at || "").slice(0, 19).replace("T", " ")
+        )
+      );
+    }
+    const ids = Array.isArray(card.selected_ids) ? card.selected_ids : [];
+    if (
+      ids.length &&
+      Array.isArray(card.options) &&
+      card.status !== "rejected"
+    ) {
+      const labelById = {};
+      card.options.forEach((o) => {
+        labelById[String(o.id)] = o.label || o.id;
+      });
+      const line = ids.map((id) => labelById[id] || id).join("，");
+      cardRoot.appendChild(
+        el("div", "msg-action-card-selected", `选用：${line}`)
+      );
+    }
+  }
+
+  wrap.appendChild(cardRoot);
+
+  const copyRow = el("div", "msg-copy-row");
+  const copyBtn = el("button", "btn-msg-copy", "全部复制");
+  copyBtn.type = "button";
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await copyToClipboard(copyActionCardSummary(text, card));
+      const prev = copyBtn.textContent;
+      copyBtn.textContent = "已复制";
+      setTimeout(() => {
+        copyBtn.textContent = prev;
+      }, 1200);
+    } catch (_) {
+      /* ignore */
+    }
+  });
+  copyRow.appendChild(copyBtn);
+  wrap.appendChild(copyRow);
+  box.appendChild(wrap);
 }
 
 /**
@@ -240,12 +797,18 @@ function renderMessages(messages, options) {
       if (!instant) startTypewriter(body, text, gen);
       continue;
     }
-    const r = role === "user" ? "user" : "assistant";
-    const { wrap, body } = createMessageBubble(r, false, {
-      initialText: instant ? text : undefined,
-    });
-    box.appendChild(wrap);
-    if (!instant) startTypewriter(body, text, gen);
+    if (role === "user") {
+      const { wrap, body } = createMessageBubble("user", false, {
+        initialText: instant ? text : undefined,
+      });
+      box.appendChild(wrap);
+      if (!instant) startTypewriter(body, text, gen);
+      continue;
+    }
+    if (role === "assistant") {
+      appendAssistantMessage(m, box, instant, gen);
+      continue;
+    }
   }
   box.scrollTop = box.scrollHeight;
 }
@@ -262,6 +825,22 @@ function setGlobalLoading(show) {
   if (!node) return;
   node.classList.toggle("hidden", !show);
   node.setAttribute("aria-hidden", show ? "false" : "true");
+}
+
+/** 仅主内容区（消息 + 输入条）等待态，不遮挡侧栏与顶栏 */
+function setMainWaiting(show, text) {
+  const node = document.getElementById("main-waiting");
+  const te = document.getElementById("main-waiting-text");
+  if (!node) return;
+  if (show) {
+    if (te) te.textContent = text || "请稍候…";
+    node.classList.remove("hidden");
+    node.setAttribute("aria-hidden", "false");
+  } else {
+    node.classList.add("hidden");
+    node.setAttribute("aria-hidden", "true");
+    if (te) te.textContent = "请稍候…";
+  }
 }
 
 function openMemoryModal() {
@@ -346,20 +925,24 @@ async function renderSessionList() {
   const ul = document.getElementById("session-list");
   ul.innerHTML = "";
   const list = await api().list_sessions();
-  for (const s of list) {
-    const li = el("li", "session-item");
-    li.dataset.id = s.id;
-    if (s.id === currentSessionId) li.classList.add("active");
-    const t = el("div", "session-item-title", s.title || s.id);
-    let subLine = `${s.mode || "chat"} · ${(s.updated_at || "").slice(0, 19)}`;
-    if (s.session_variant === "team" && s.team_size != null) {
-      subLine = `团队·${s.team_size} · ${subLine}`;
+  const sortEl = document.getElementById("session-sort");
+  const groupEl = document.getElementById("session-group");
+  const sortMode = sortEl ? sortEl.value : getSessionSortMode();
+  const groupMode = groupEl ? groupEl.value : getSessionGroupMode();
+  const sorted = sortSessions(list, sortMode);
+  const groups = groupSessions(sorted, groupMode);
+  for (const g of groups) {
+    if (g.label) {
+      const gli = el("li", "session-group");
+      const title = el("div", "session-group-title", g.label);
+      const innerUl = el("ul", "session-group-items");
+      gli.appendChild(title);
+      gli.appendChild(innerUl);
+      ul.appendChild(gli);
+      for (const s of g.items) appendSessionRow(s, innerUl);
+    } else {
+      for (const s of g.items) appendSessionRow(s, ul);
     }
-    const sub = el("div", "session-item-meta", subLine);
-    li.appendChild(t);
-    li.appendChild(sub);
-    li.addEventListener("click", () => openSession(s.id));
-    ul.appendChild(li);
   }
 }
 
@@ -421,6 +1004,31 @@ async function onSubmit(e) {
   const isTeam =
     lastSessionMeta && lastSessionMeta.session_variant === "team";
   const mode = document.querySelector('input[name="mode"]:checked').value;
+
+  if (mode === "persona" && !isTeam) {
+    setBusy(true);
+    try {
+      await pushWorkspaceAndMode();
+      const res = await api().persona_send(text);
+      if (res.sync) {
+        if (!res.ok) {
+          appendMessage(
+            "assistant",
+            res.message || res.error || "失败",
+            true
+          );
+        } else if (res.message) {
+          appendMessage("assistant", res.message, false);
+        }
+      }
+    } catch (err) {
+      appendMessage("assistant", "调用失败：" + String(err), true);
+    } finally {
+      setBusy(false);
+    }
+    return;
+  }
+
   const pendingLabel =
     mode === "react" ? "正在推理与执行…" : "正在思考…";
 
@@ -434,8 +1042,8 @@ async function onSubmit(e) {
   box.scrollTop = box.scrollHeight;
 
   setBusy(true);
-  setGlobalLoading(true);
-  setGlobalLoadingText(
+  setMainWaiting(
+    true,
     isTeam ? "团队多模型处理中，请稍候…" : "正在生成回复…"
   );
   try {
@@ -451,8 +1059,7 @@ async function onSubmit(e) {
     appendMessage("assistant", "调用失败：" + String(err), true);
   } finally {
     setBusy(false);
-    setGlobalLoading(false);
-    setGlobalLoadingText("请稍候…");
+    setMainWaiting(false);
   }
 }
 
@@ -469,7 +1076,45 @@ function appendMessage(role, text, isError) {
 }
 
 function init() {
+  window.__ruyiPersonaDispatch = dispatchPersonaEvent;
+
+  applySavedSessionListPrefs();
+  const sortEl = document.getElementById("session-sort");
+  const groupEl = document.getElementById("session-group");
+  if (sortEl) {
+    sortEl.addEventListener("change", () => {
+      try {
+        localStorage.setItem(LS_SESSION_SORT, sortEl.value);
+      } catch (_) {
+        /* ignore */
+      }
+      renderSessionList();
+    });
+  }
+  if (groupEl) {
+    groupEl.addEventListener("change", () => {
+      try {
+        localStorage.setItem(LS_SESSION_GROUP, groupEl.value);
+      } catch (_) {
+        /* ignore */
+      }
+      renderSessionList();
+    });
+  }
+
   document.getElementById("chat-form").addEventListener("submit", onSubmit);
+
+  const personaInterruptBtn = document.getElementById("btn-persona-interrupt");
+  if (personaInterruptBtn) {
+    personaInterruptBtn.addEventListener("click", async () => {
+      try {
+        await api().persona_interrupt();
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  }
+
   const input = document.getElementById("input");
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {

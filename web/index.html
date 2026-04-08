@@ -15,6 +15,25 @@
         <button type="button" id="btn-team-session" class="btn btn-small" title="需配置至少 2 条 team.models">团队</button>
       </div>
     </div>
+    <div class="sidebar-session-toolbar">
+      <label class="session-toolbar-field">
+        <span class="session-toolbar-label">排序</span>
+        <select id="session-sort" class="session-toolbar-select" aria-label="会话排序">
+          <option value="updated_desc">最近更新</option>
+          <option value="title_asc">标题 A-Z</option>
+          <option value="title_desc">标题 Z-A</option>
+          <option value="id_asc">会话 id</option>
+        </select>
+      </label>
+      <label class="session-toolbar-field">
+        <span class="session-toolbar-label">分组</span>
+        <select id="session-group" class="session-toolbar-select" aria-label="会话分组">
+          <option value="none">不分组</option>
+          <option value="type">按类型</option>
+          <option value="time">按更新时间</option>
+        </select>
+      </label>
+    </div>
     <ul id="session-list" class="session-list"></ul>
     <p id="storage-hint" class="storage-hint"></p>
     <div class="sidebar-footer">
@@ -38,6 +57,7 @@
         <span class="mode-label">模式</span>
         <label class="radio"><input type="radio" name="mode" value="chat" checked /> 对话（仅回答）</label>
         <label class="radio"><input type="radio" name="mode" value="react" /> ReAct（思考并执行）</label>
+        <label class="radio"><input type="radio" name="mode" value="persona" /> 拟人（流式·可打断）</label>
         <label class="field react-steps">
           <span>ReAct 最大步数</span>
           <input type="number" id="react-steps" min="1" max="200" value="8" class="field-input narrow" />
@@ -54,8 +74,15 @@
           placeholder="输入消息，Enter 发送，Shift+Enter 换行"
           autocomplete="off"
         ></textarea>
+        <button type="button" id="btn-persona-interrupt" class="send btn-interrupt hidden" title="中断当前拟人回复">打断</button>
         <button type="submit" id="send" class="send">发送</button>
       </form>
+      <div id="main-waiting" class="main-waiting hidden" aria-busy="true" aria-hidden="true">
+        <div class="main-waiting-inner">
+          <div class="spinner" aria-hidden="true"></div>
+          <p id="main-waiting-text" class="main-waiting-text">请稍候…</p>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -102,6 +129,16 @@
     </div>
   </div>
 
+  <script>
+    window.__ruyiPersonaEvent = function (jsonStr) {
+      try {
+        var evt = JSON.parse(jsonStr);
+        if (typeof window.__ruyiPersonaDispatch === "function") {
+          window.__ruyiPersonaDispatch(evt);
+        }
+      } catch (e) { /* ignore */ }
+    };
+  </script>
   <script src="app.js"></script>
 </body>
 </html>
