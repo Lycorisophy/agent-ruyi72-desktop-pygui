@@ -140,6 +140,15 @@ class MemoryAutoExtractConfig(BaseModel):
     max_sessions_scanned: int = Field(default=30, ge=1, le=500)
 
 
+class BuiltinSchedulerConfig(BaseModel):
+    """内置会话级 + 全局定时任务调度线程。"""
+
+    enabled: bool = True
+    tick_interval_sec: int = Field(default=20, ge=5, le=300)
+    max_sessions_scanned: int = Field(default=50, ge=1, le=500)
+    max_tasks_per_tick: int = Field(default=3, ge=1, le=20)
+
+
 class RuyiConfig(BaseModel):
     version: int = 1
     app: AppConfig = Field(default_factory=AppConfig)
@@ -150,6 +159,9 @@ class RuyiConfig(BaseModel):
     team: TeamConfig = Field(default_factory=TeamConfig)
     memory_auto_extract: MemoryAutoExtractConfig = Field(
         default_factory=MemoryAutoExtractConfig
+    )
+    builtin_scheduler: BuiltinSchedulerConfig = Field(
+        default_factory=BuiltinSchedulerConfig
     )
 
 

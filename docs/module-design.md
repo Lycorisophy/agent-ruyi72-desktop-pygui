@@ -1,6 +1,6 @@
 # 如意72 功能模块设计总览
 
-本文描述桌面端各模块的**职责、关键入口、主要文件与模块间关系**。实现细节以源码为准；**团队模式**与**记忆系统**另有专篇，此处仅摘要并给出链接。
+本文描述桌面端各模块的**职责、关键入口、主要文件与模块间关系**。实现细节以源码为准；**团队模式**、**记忆系统**与**内置定时任务（设计草案）**另有专篇，此处仅摘要并给出链接。
 
 ## 总览关系
 
@@ -210,6 +210,25 @@ flowchart TB
 **要点**：`build_system_block` 拼接固定段与 `extra_system`；`split_reply_action_card` 从助手回复剥离卡片并校验 `v=1` 等字段。
 
 **边界**：卡片持久化在消息的 `card` 字段，由 `sanitize_card_from_storage` 在读盘时校验。
+
+---
+
+## 14. 内置定时任务
+
+**目的**：**会话级**与**全局**两类进程内定时计划（与技能生态中的外部定时区分）。
+
+**专篇**：[scheduled-tasks-design.md](scheduled-tasks-design.md)
+
+**实现概要**（以源码为准）：
+
+- 模块目录：[src/scheduler/](../src/scheduler/)（模型、持久化、`scheduling` 的 next 计算、执行器、后台线程、`crud`）。
+- 持久化：`sessions/<id>/scheduled_tasks.json`，`~/.ruyi72/global_scheduled_tasks.json`。
+- 触发器：`interval_sec`、`daily_at`（本地 HH:MM）；动作：`noop`、`append_system_message`（全局仅 `noop`）。
+- 与 `ConversationService`：`append_message_from_scheduler`、`is_session_active`；执行在进程空闲（`is_idle_for_auto_memory`）时进行；`missed_run_after_wake` 等字段已建模，唤醒补跑策略可后续对齐专篇。
+
+**API**（`Api`）：`list_scheduled_tasks`、`save_scheduled_task`、`delete_scheduled_task`。
+
+**边界**：Web UI 可后续接入；`call_llm_prompt` 等未实现。
 
 ---
 

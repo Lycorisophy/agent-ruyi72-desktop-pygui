@@ -25,6 +25,8 @@ from src.debug_log import set_debug_from_app  # noqa: E402
 from src.llm.ollama import effective_trust_env, resolve_llm_api_key  # noqa: E402
 from src.llm.ruyi72_identity_files import read_for_api, save_partial  # noqa: E402
 from src.agent.memory_auto_extract import start_memory_auto_extract_worker  # noqa: E402
+from src.scheduler import start_builtin_scheduler_worker  # noqa: E402
+from src.scheduler import crud as scheduler_crud  # noqa: E402
 from src.agent.memory_extractor import extract_and_store_from_text  # noqa: E402
 from src.agent.memory_tools import browse_memory_formatted  # noqa: E402
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
@@ -265,6 +267,23 @@ class Api:
             p = "."
         return self._svc.list_workspace_preview(p)
 
+    def list_scheduled_tasks(self, payload: object = None) -> dict:
+        """内置定时任务列表。payload: { kind: global|session, session_id?: str }"""
+        p = payload if isinstance(payload, dict) else {}
+        return scheduler_crud.list_tasks(self._svc, p)
+
+    def save_scheduled_task(self, payload: object) -> dict:
+        """创建或更新一条计划（完整 ScheduledTask 字段）。"""
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "无效请求"}
+        return scheduler_crud.save_task(self._svc, payload)
+
+    def delete_scheduled_task(self, payload: object) -> dict:
+        """删除计划。payload: { kind, task_id, session_id? }"""
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "无效请求"}
+        return scheduler_crud.delete_task(self._svc, payload)
+
 
 def main() -> None:
     cfg = load_config()
@@ -293,6 +312,7 @@ def main() -> None:
         react_default_steps=cfg.agent.react_max_steps_default,
     )
     start_memory_auto_extract_worker(svc)
+    start_builtin_scheduler_worker(svc)
     api = Api(svc, cfg)
     index = ROOT / "web" / "index.html"
     url = index.resolve().as_uri()

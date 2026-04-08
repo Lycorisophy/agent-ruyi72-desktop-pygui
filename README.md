@@ -46,6 +46,8 @@ pip install -r requirements.txt
 
 7. **闲时自动记忆抽取（可选）**：配置块 `memory_auto_extract`（默认 `enabled: false`）在进程**空闲**时按会话游标从各会话 `messages.json` 增量调用抽取器；游标持久化在 `%USERPROFILE%\.ruyi72\memory_auto_extract_state.json`。字段说明见 [config/ruyi72.example.yaml](config/ruyi72.example.yaml) 与 [docs/memory-system.md](docs/memory-system.md)。
 
+8. **内置定时任务（可选）**：配置块 `builtin_scheduler`；计划持久化在会话目录 `scheduled_tasks.json` 与 `%USERPROFILE%\.ruyi72\global_scheduled_tasks.json`，由后端线程在空闲时触发；可通过 `pywebview.api.list_scheduled_tasks` / `save_scheduled_task` / `delete_scheduled_task` 管理。详见 [docs/scheduled-tasks-design.md](docs/scheduled-tasks-design.md) 与 [docs/module-design.md](docs/module-design.md) §14。
+
 ## 功能概览
 
 - **标准对话（Chat）**：多轮问答，不自动执行工具；可选 **交互确认卡片**（`action_card`），用户确认后可触发后续回复。
@@ -55,6 +57,7 @@ pip install -r requirements.txt
 - **知识库会话**：将工作区视为知识库根目录，按预设侧重（收录、摘要、问答等）注入系统提示。
 - **工作区**：非团队路径下多数模式需有效目录；工具与目录预览均校验路径，禁止越界访问。
 - **记忆**：跨会话结构化存储与检索；支持手动「记忆提取」与可选 **闲时自动抽取**（`memory_auto_extract`）；详情见 [docs/memory-system.md](docs/memory-system.md)。
+- **内置定时任务**：会话级与全局计划（`noop` / 向会话追加系统提示等），配置 `builtin_scheduler`；设计见 [docs/scheduled-tasks-design.md](docs/scheduled-tasks-design.md)。
 - **界面**：会话列表与全文搜索、主题色、**头部「模型与 API 设置」**与 **「身份与记忆提示词」**（`SOUL.md` / `USER.md` / `MEMORY.md`）、右侧任务上下文与技能列表、提示词模板条、分屏下列出工作区目录元信息（`list_workspace_preview`）等。
 
 模块职责、数据流与文件索引见 **[docs/module-design.md](docs/module-design.md)**。

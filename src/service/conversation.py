@@ -73,6 +73,10 @@ class ConversationService:
         """由 app.Api 注入：把拟人事件推到前端（如 pywebview evaluate_js）。"""
         self._persona_emit = fn
 
+    @property
+    def store(self) -> SessionStore:
+        return self._store
+
     def llm_config(self) -> LLMConfig:
         return self._llm
 
@@ -86,6 +90,10 @@ class ConversationService:
 
     def active_session_id(self) -> str | None:
         return self._active_id
+
+    def is_session_active(self, session_id: str) -> bool:
+        """当前前台活动会话是否为给定 id（用于定时任务 run_when_session_inactive==False）。"""
+        return (self._active_id or "") == (session_id or "").strip()
 
     def session_path_for(self, session_id: str) -> Path:
         return self._store.root / session_id
@@ -325,6 +333,25 @@ class ConversationService:
         self.ensure_session()
         assert self._meta is not None and self._active_id is not None
         return {"meta": self._meta.model_dump(), "messages": list(self._messages)}
+
+    def append_message_from_scheduler(
+        self,
+        session_id: str,
+        *,
+        role: str,
+        content: str,
+    ) -> None:
+        """内置定时任务写入消息（写盘；若该会话为当前活动会话则同步内存）。"""
+        sid = (session_id or "").strip()
+        if not sid:
+            raise ValueError("session_id 为空")
+        if role not in ("user", "assistant", "system"):
+            raise ValueError("role 须为 user / assistant / system")
+        _, messages = self._store.load(sid)
+        messages.append({"role": role, "content": content})
+        self._store.save_messages(sid, messages)
+        if self._active_id == sid:
+            self._meta, self._messages = self._store.load(sid)
 
     def _kb_system_extra(self) -> str | None:
         if self._meta is None or self._meta.session_variant != "knowledge":

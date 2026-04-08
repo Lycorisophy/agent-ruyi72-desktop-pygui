@@ -61,3 +61,10 @@ persona:
 #   max_chars_per_batch: 16000
 #   min_chars_to_extract: 40
 #   max_sessions_scanned: 30
+
+# 内置会话级 + 全局定时任务调度（计划见 docs/scheduled-tasks-design.md）
+# builtin_scheduler:
+#   enabled: true
+#   tick_interval_sec: 20
+#   max_sessions_scanned: 50
+#   max_tasks_per_tick: 3
