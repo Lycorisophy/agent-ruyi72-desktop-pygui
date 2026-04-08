@@ -2,7 +2,7 @@
 name: wechat-mp-cn
 description: 微信公众号监控 - 文章监控、阅读量追踪、舆情分析（WeChat Official Account）
 metadata:
-  openclaw:
+  ruyi72:
     emoji: "📱"
     category: "social"
     tags: ["wechat", "mp", "china", "official-account", "monitoring"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Process Manager Skill for OpenClaw
+Process Manager Skill for Ruyi72
 Windows 进程管理技能，支持进程查看和控制
 """
 

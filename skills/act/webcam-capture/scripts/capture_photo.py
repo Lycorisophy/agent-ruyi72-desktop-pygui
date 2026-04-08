@@ -19,7 +19,7 @@ from pathlib import Path
 from datetime import datetime
 
 # 配置
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
+WORKSPACE = Path.home() / ".ruyi72" / "workspace"
 CAPTURE_DIR = WORKSPACE / "memory" / "webcam-capture"
 CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 

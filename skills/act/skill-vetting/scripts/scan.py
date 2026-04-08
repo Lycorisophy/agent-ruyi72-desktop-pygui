@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Security scanner for ClawHub skills
+Security scanner for third-party skill packages
 Detects common malicious patterns and security risks
 """
 
@@ -214,7 +214,7 @@ class SkillScanner:
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='Security scanner for ClawHub skills')
+    parser = argparse.ArgumentParser(description='Security scanner for third-party skill packages')
     parser.add_argument('path', help='Skill directory to scan')
     parser.add_argument('--format', choices=['text', 'json'], default='text',
                        help='Output format (default: text)')

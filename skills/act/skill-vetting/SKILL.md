@@ -1,23 +1,23 @@
 ---
 name: skill-vetting
-description: Vet ClawHub skills for security and utility before installation. Use when considering installing a ClawHub skill, evaluating third-party code, or assessing whether a skill adds value over existing tools.
+description: Vet third-party skills for security and utility before installation. Use when considering installing an external skill package, evaluating third-party code, or assessing whether a skill adds value over existing tools.
 ---
 
 # Skill Vetting
 
-Safely evaluate ClawHub skills for security risks and practical utility.
+Safely evaluate third-party skill packages for security risks and practical utility.
 
 ## Quick Start
 
 ```bash
 # Download and inspect
 cd /tmp
-curl -L -o skill.zip "https://clawhub.ai/api/v1/download?slug=SKILL_NAME"
+curl -L -o skill.zip "<DOWNLOAD_URL>"
 mkdir skill-inspect && cd skill-inspect
 unzip -q ../skill.zip
 
 # Run scanner
-python3 ~/.openclaw/workspace/skills/skill-vetting/scripts/scan.py .
+python3 ~/.ruyi72/workspace/skills/skill-vetting/scripts/scan.py .
 
 # Manual review
 cat SKILL.md
@@ -30,7 +30,7 @@ cat scripts/*.py
 
 ```bash
 cd /tmp
-curl -L -o skill.zip "https://clawhub.ai/api/v1/download?slug=SLUG"
+curl -L -o skill.zip "<DOWNLOAD_URL>"
 mkdir skill-NAME && cd skill-NAME
 unzip -q ../skill.zip
 ```
@@ -38,7 +38,7 @@ unzip -q ../skill.zip
 ### 2. Run Automated Scanner
 
 ```bash
-python3 ~/.openclaw/workspace/skills/skill-vetting/scripts/scan.py .
+python3 ~/.ruyi72/workspace/skills/skill-vetting/scripts/scan.py .
 ```
 
 **Exit codes:** 0 = Clean, 1 = Issues found
@@ -86,7 +86,7 @@ grep -rniE "ignore.*instruction|disregard.*previous|system:|assistant:|pre-appro
 Compare to:
 - MCP servers (`mcporter list`)
 - Direct APIs (curl + jq)
-- Existing skills (`clawhub list`)
+- Existing skills (本项目 `skills/` 目录及界面中的技能列表)
 
 **Skip if:** Duplicates existing tools without significant improvement.
 

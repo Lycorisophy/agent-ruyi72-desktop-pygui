@@ -31,8 +31,8 @@ const { execFileSync } = require('child_process');
 
 // ─── 配置 ─────────────────────────────────────────────────────
 const TOOLS_MD_PATHS = [
-    path.join(os.homedir(), '.openclaw', 'workspace-xina-gongzhonghao', 'TOOLS.md'),
-    path.join(os.homedir(), '.openclaw', 'workspace', 'TOOLS.md'),
+    path.join(os.homedir(), '.ruyi72', 'workspace-xina-gongzhonghao', 'TOOLS.md'),
+    path.join(os.homedir(), '.ruyi72', 'workspace', 'TOOLS.md'),
 ];
 const WENYAN_TOKEN_CACHE = path.join(os.homedir(), '.config', 'wenyan-md', 'token.json');
 const DEFAULT_THEME = 'lapis';

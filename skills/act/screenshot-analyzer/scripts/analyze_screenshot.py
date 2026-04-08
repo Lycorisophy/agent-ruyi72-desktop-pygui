@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 # 存储目录
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/screenshot-analyzer")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/screenshot-analyzer")
 
 
 def find_latest_screenshot():
@@ -104,7 +104,7 @@ def main():
         return 1
     
     print(f"截图文件: {image_path}")
-    print(f"\n请使用OpenClaw的image-understanding技能分析此图片")
+    print(f"\n请使用Ruyi72的image-understanding技能分析此图片")
     print(f"或直接告诉我，我会使用技能帮你分析")
     
     if args.json:

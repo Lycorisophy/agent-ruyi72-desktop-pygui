@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/desktop-notifier")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/desktop-notifier")
 NOTIFICATIONS_FILE = os.path.join(STORAGE_DIR, "notifications.json")
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PPT Presentation Writer for OpenClaw
+PPT Presentation Writer for Ruyi72
 Creates professional .pptx presentations
 """
 
@@ -131,7 +131,7 @@ def format_results(results: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='PPT Presentation Writer for OpenClaw',
+        description='PPT Presentation Writer for Ruyi72',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

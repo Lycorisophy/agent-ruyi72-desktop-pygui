@@ -60,7 +60,7 @@ Error: WECHAT_APP_ID is required
 
 **方式 1: 使用 setup.sh**
 ```bash
-cd /Users/leebot/.openclaw/workspace/wechat-publisher
+cd ~/.ruyi72/workspace/wechat-publisher
 source ./scripts/setup.sh
 ```
 
@@ -285,7 +285,7 @@ wenyan theme --help
 
 **wechat-publisher 帮助：**
 ```bash
-cd /Users/leebot/.openclaw/workspace/wechat-publisher
+cd ~/.ruyi72/workspace/wechat-publisher
 ./scripts/publish.sh --help
 ```
 

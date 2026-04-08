@@ -25,7 +25,7 @@ except ImportError:
     print("[警告] ChromaDB未安装，请先安装: pip install chromadb")
 
 # 配置路径
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
+WORKSPACE = Path.home() / ".ruyi72" / "workspace"
 VECTOR_DB_DIR = WORKSPACE / "memory" / "vector_db" / "chroma"
 
 # Ollama配置

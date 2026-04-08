@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/enhanced-memory")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/enhanced-memory")
 MEMORY_FILE = os.path.join(STORAGE_DIR, "memory.json")
 
 

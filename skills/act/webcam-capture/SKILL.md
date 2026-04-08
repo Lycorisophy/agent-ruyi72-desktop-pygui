@@ -123,7 +123,7 @@ python scripts/capture_photo.py --list-devices
 AI: [思考] 常规查看，默认连拍5张
      执行: python scripts/capture_photo.py --burst 5 --interval 0.5 --device 1
      📸 拍照成功！连拍5张，每张间隔0.5秒
-     照片保存在: ~/.openclaw/workspace/memory/webcam-capture/
+     照片保存在: ~/.ruyi72/workspace/memory/webcam-capture/
      现在帮你分析一下？
 
 用户: 好
@@ -148,7 +148,7 @@ AI: [思考] 快速连拍捕捉当前动作
 ## 照片保存位置
 
 ```
-~/.openclaw/workspace/memory/webcam-capture/
+~/.ruyi72/workspace/memory/webcam-capture/
 ├── photo_20260318_143000.jpg     # 单张
 ├── photo_20260318_143010_b1.jpg  # 连拍第1张
 ├── photo_20260318_143010_b2.jpg  # 连拍第2张

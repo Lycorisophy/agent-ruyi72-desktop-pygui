@@ -7,7 +7,7 @@ import re
 import sys
 from datetime import datetime
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/clipboard-enhance")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/clipboard-enhance")
 HISTORY_FILE = os.path.join(STORAGE_DIR, "history.json")
 FAVORITES_FILE = os.path.join(STORAGE_DIR, "favorites.json")
 

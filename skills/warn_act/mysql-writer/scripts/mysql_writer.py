@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MySQL Database Skill for OpenClaw
+MySQL Database Skill for Ruyi72
 Execute SQL queries and database operations
 """
 
@@ -217,7 +217,7 @@ def format_list_results(result: dict, item_type: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='MySQL Database Tool for OpenClaw',
+        description='MySQL Database Tool for Ruyi72',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

@@ -121,6 +121,6 @@ description: |
 
 ## 安装说明
 
-1. 将此文件夹复制到 OpenClaw skills 目录
+1. 将此文件夹复制到 如意72 skills 目录
 2. 无需额外依赖
-3. 重启 OpenClaw 即可使用
+3. 重启 如意72 即可使用

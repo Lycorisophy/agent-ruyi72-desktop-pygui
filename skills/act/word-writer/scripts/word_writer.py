@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Word Document Writer for OpenClaw
+Word Document Writer for Ruyi72
 Creates professional .docx documents
 """
 
@@ -148,7 +148,7 @@ def format_results(results: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Word Document Writer for OpenClaw',
+        description='Word Document Writer for Ruyi72',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

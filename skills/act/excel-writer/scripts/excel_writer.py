@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Excel Spreadsheet Writer for OpenClaw
+Excel Spreadsheet Writer for Ruyi72
 Creates professional .xlsx spreadsheets
 """
 
@@ -126,7 +126,7 @@ def format_results(results: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Excel Spreadsheet Writer for OpenClaw',
+        description='Excel Spreadsheet Writer for Ruyi72',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

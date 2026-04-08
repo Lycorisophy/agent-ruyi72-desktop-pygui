@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-File Organizer Skill for OpenClaw
+File Organizer Skill for Ruyi72
 Helps organize files and documents in folders
 """
 
@@ -383,7 +383,7 @@ def format_folder_structure_results(results: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='File Organizer Tool for OpenClaw',
+        description='File Organizer Tool for Ruyi72',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

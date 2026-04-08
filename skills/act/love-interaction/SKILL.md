@@ -89,7 +89,7 @@ description: |
 
 ## 数据存储
 
-好感度数据存储在 `~/.openclaw/workspace/LOVE_SYSTEM.md`
+好感度数据存储在 `~/.ruyi72/workspace/LOVE_SYSTEM.md`
 
 每次根据评分调整好感度后需要更新该文件：
 - 当前好感度

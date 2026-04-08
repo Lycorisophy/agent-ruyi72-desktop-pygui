@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Report Writer Skill for OpenClaw
+Report Writer Skill for Ruyi72
 综合报告生成技能，整合系统信息生成 Markdown 报告
 """
 
@@ -284,7 +284,7 @@ def generate_system_report(title='系统状态报告'):
     
     report.append('---')
     report.append('')
-    report.append('*报告由 OpenClaw 自动生成*')
+    report.append('*报告由 如意72 自动生成*')
     
     return '\n'.join(report)
 
@@ -317,7 +317,7 @@ def generate_process_report(top_n=30, by='memory'):
     report.append('')
     report.append('---')
     report.append('')
-    report.append('*报告由 OpenClaw 自动生成*')
+    report.append('*报告由 如意72 自动生成*')
     
     return '\n'.join(report)
 
@@ -371,7 +371,7 @@ def generate_service_report(status_filter=None):
     
     report.append('---')
     report.append('')
-    report.append('*报告由 OpenClaw 自动生成*')
+    report.append('*报告由 如意72 自动生成*')
     
     return '\n'.join(report)
 
@@ -494,7 +494,7 @@ def main():
             
             report.append('---')
             report.append('')
-            report.append('*报告由 OpenClaw 自动生成*')
+            report.append('*报告由 如意72 自动生成*')
             
             final_report = '\n'.join(report)
             success, message = save_report(final_report, args.output)

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # 配置路径
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
+WORKSPACE = Path.home() / ".ruyi72" / "workspace"
 MEMORY_DIR = WORKSPACE / "memory"
 SHORT_TERM_DIR = MEMORY_DIR / "SHORT_TERM"
 LONG_TERM_DIR = MEMORY_DIR / "LONG_TERM"

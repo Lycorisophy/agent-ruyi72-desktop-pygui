@@ -1,6 +1,6 @@
 # 📦 微信公众号工具包 (wechat-toolkit)
 
-> OpenClaw Skill — 微信公众号一站式工具包，集成 **搜索 → 下载 → 洗稿 → 发布** 四大功能，覆盖公众号内容创作全流程。
+> 如意72 Skill — 微信公众号一站式工具包，集成 **搜索 → 下载 → 洗稿 → 发布** 四大功能，覆盖公众号内容创作全流程。
 >
 > 📦 **跨平台支持**: macOS / Linux / Windows（全部脚本基于 Node.js）
 
@@ -23,13 +23,13 @@
 
 - **Node.js** ≥ 18
 - **Google Chrome**（下载模块需要）
-- [OpenClaw](https://github.com/anthropics/openclaw) 运行环境
+- **如意72**：本仓库桌面端应用；技能放在项目根目录 `skills/` 下由内置加载器识别（无需第三方运行环境）。
 
 ### 安装
 
 ```bash
-# 1. 克隆仓库到 OpenClaw skills 目录
-git clone git@github.com:Mr-Q526/openclaw-skill-wechat-toolkit.git skills/wechat-toolkit
+# 1. 若单独获取本技能包，请 clone 到本项目的 skills 目录下（将 URL 替换为你的实际源）
+# git clone <你的仓库地址> skills/act/wechat-toolkit
 
 # 2. 安装搜索模块依赖
 npm install -g cheerio
@@ -88,7 +88,7 @@ node scripts/downloader/download.js "https://mp.weixin.qq.com/s/xxx" --no-image 
 
 ### ✍️ 洗稿改写
 
-作为 OpenClaw Skill 使用，通过自然语言指令触发：
+作为 如意72 Skill 使用，通过自然语言指令触发：
 
 - *"帮我洗稿这篇文章"*
 - *"改写成原创"*
@@ -128,7 +128,7 @@ cover: /absolute/path/to/cover.jpg（必填，使用绝对路径）
 
 ```
 wechat-toolkit/
-├── SKILL.md                        # OpenClaw Skill 定义
+├── SKILL.md                        # 如意72 Skill 定义
 ├── README.md                       # 本文件
 ├── example.md                      # 示例文章
 ├── references/                     # 参考文档

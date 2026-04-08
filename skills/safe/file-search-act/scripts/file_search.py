@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""File Search for OpenClaw - Full text search in files"""
+"""File Search for Ruyi72 - Full text search in files"""
 import argparse, os, re
 from pathlib import Path
 
@@ -94,7 +94,7 @@ def format_results(result):
     return '\n'.join(output)
 
 def main():
-    parser = argparse.ArgumentParser(description='File Search for OpenClaw')
+    parser = argparse.ArgumentParser(description='File Search for Ruyi72')
     parser.add_argument('path', nargs='?', default='.', help='Search path')
     parser.add_argument('pattern', help='Search pattern')
     parser.add_argument('--types', '-t', help='File types (e.g., .py,.md)')

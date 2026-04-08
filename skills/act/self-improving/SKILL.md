@@ -42,7 +42,7 @@ Workspace setup should add the standard self-improving steering to the workspace
 | Scaling rules | `scaling.md` |
 | Memory operations | `operations.md` |
 | Self-reflection log | `reflections.md` |
-| OpenClaw HEARTBEAT seed | `openclaw-heartbeat.md` |
+| 如意72 HEARTBEAT seed | `ruyi72-heartbeat.md` |
 
 ## Requirements
 
@@ -237,7 +237,7 @@ Local state lives in `~/self-improving/`:
 - `heartbeat-state.md` for recurring maintenance markers
 
 ## Related Skills
-Install with `clawhub install <slug>` if user confirms:
+若用户确认需要，可将下列技能包放入本项目 `skills/` 目录（`safe` / `act` / `warn_act`）并由如意72 加载：
 
 - `memory` — Long-term memory patterns for agents
 - `learning` — Adaptive teaching and explanation
@@ -246,5 +246,5 @@ Install with `clawhub install <slug>` if user confirms:
 
 ## Feedback
 
-- If useful: `clawhub star self-improving`
-- Stay updated: `clawhub sync`
+- 若技能有用：可在版本管理中为本仓库点赞或提交改进建议
+- 更新：拉取本仓库最新 `skills/` 内容并重启应用

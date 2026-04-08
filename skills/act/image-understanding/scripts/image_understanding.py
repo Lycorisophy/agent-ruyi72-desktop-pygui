@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Image Understanding Skill for OpenClaw"""
+"""Image Understanding Skill for Ruyi72"""
 
 def main():
     """图片理解技能说明"""
     print("""
 🖼️ Image Understanding Skill
     
-这个技能使用 OpenClaw 内置的 images_understand 工具来分析图片。
+这个技能使用 Ruyi72 内置的 images_understand 工具来分析图片。
 
 使用方法：
-1. 用户提供图片路径（如：C:\\Users\\LySoY\\Pictures\\photo.jpg）
+1. 用户提供图片路径（如：C:\\Users\\YourName\\Pictures\\photo.jpg）
 2. AI 使用 images_understand 工具分析图片内容
 3. 返回图片的详细描述
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MD Document Writer for OpenClaw
+MD Document Writer for Ruyi72
 Creates Markdown documents with full formatting support
 """
 
@@ -242,7 +242,7 @@ def format_md_results(saved_path: str, content_length: int) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='MD Document Writer for OpenClaw',
+        description='MD Document Writer for Ruyi72',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     

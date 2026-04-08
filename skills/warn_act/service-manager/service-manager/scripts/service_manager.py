@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Service Manager Skill for OpenClaw
+Service Manager Skill for Ruyi72
 Windows 服务管理技能，支持服务操作和定时任务管理
-支持 OpenClaw 技能系统调用
+支持 Ruyi72 技能系统调用
 """
 
 import argparse
@@ -158,7 +158,7 @@ def query_scheduled_tasks():
 
 def main():
     """
-    主函数 - 支持 OpenClaw 技能系统调用
+    主函数 - 支持 Ruyi72 技能系统调用
     
     使用方式:
         python service_manager.py list

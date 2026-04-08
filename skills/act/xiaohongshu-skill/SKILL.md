@@ -2,7 +2,7 @@
 name: xiaohongshu-skill
 description: 当用户想要与小红书（xiaohongshu/rednote）交互时使用此 Skill。包括搜索笔记、获取帖子详情、查看用户主页、二维码扫码登录、提取平台内容等。当用户提到 xiaohongshu、小红书、rednote，或需要浏览/抓取中国社交媒体内容时激活此 Skill。
 user-invokable: true
-metadata: {"openclaw": {"emoji": "📕", "requires": {"bins": ["python3", "playwright"], "anyBins": ["python3", "python"]}, "os": ["win32", "linux", "darwin"], "install": [{"id": "pip", "kind": "node", "label": "Install dependencies (pip)", "bins": ["playwright"]}]}}
+metadata: {"ruyi72": {"emoji": "📕", "requires": {"bins": ["python3", "playwright"], "anyBins": ["python3", "python"]}, "os": ["win32", "linux", "darwin"], "install": [{"id": "pip", "kind": "node", "label": "Install dependencies (pip)", "bins": ["playwright"]}]}}
 ---
 
 # 小红书 Skill

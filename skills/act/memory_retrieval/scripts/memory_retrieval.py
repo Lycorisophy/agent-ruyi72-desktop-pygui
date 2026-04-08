@@ -23,7 +23,7 @@ except ImportError:
     print("[警告] ChromaDB未安装，使用关键词匹配模式")
 
 # 配置路径
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
+WORKSPACE = Path.home() / ".ruyi72" / "workspace"
 SHORT_TERM_DIR = WORKSPACE / "memory" / "SHORT_TERM"
 LONG_TERM_DIR = WORKSPACE / "memory" / "LONG_TERM"
 EPISODIC_DIR = LONG_TERM_DIR / "episodic"

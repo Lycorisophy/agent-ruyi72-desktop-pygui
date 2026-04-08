@@ -3,7 +3,7 @@ name: wechat-toolkit
 description: "微信公众号一站式工具包 — 集成文章搜索、文章下载、AI洗稿改写、公众号发布四大功能。当用户需要搜索/下载/改写/发布微信公众号文章时使用。"
 metadata:
   {
-    "openclaw":
+    "ruyi72":
       {
         "emoji": "📦",
         "requires": { "bins": ["node"] },
@@ -271,10 +271,10 @@ cover: https://example.com/cover.jpg  # 封面图（必填！）
 
 **⚠️ 图片路径必须使用绝对路径**，避免 wenyan 路径解析问题。包括 cover 和正文中的所有图片引用：
 ```markdown
-cover: /Users/minruiqing/photos/cover.jpg        # ✅ 绝对路径
+cover: /Users/YourName/photos/cover.jpg        # ✅ 绝对路径（示例）
 cover: ./assets/cover.jpg                         # ❌ 相对路径可能出错
 
-![配图](/Users/minruiqing/photos/image.jpg)       # ✅ 绝对路径
+![配图](/Users/YourName/photos/image.jpg)       # ✅ 绝对路径（示例）
 ![配图](./images/photo.jpg)                       # ❌ 相对路径可能出错
 ```
 

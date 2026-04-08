@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Cloud Sync for OpenClaw - OneDrive and cloud storage operations"""
+"""Cloud Sync for Ruyi72 - OneDrive and cloud storage operations"""
 import argparse, os, json
 from pathlib import Path
 
 class CloudSync:
     def __init__(self, provider='onedrive'):
         self.provider = provider
-        self.config_file = Path.home() / '.openclaw' / 'cloud_sync.json'
+        self.config_file = Path.home() / '.ruyi72' / 'cloud_sync.json'
         self.credentials = self.load_credentials()
     
     def load_credentials(self):
@@ -97,7 +97,7 @@ class CloudSync:
         }
 
 def main():
-    parser = argparse.ArgumentParser(description='Cloud Sync for OpenClaw')
+    parser = argparse.ArgumentParser(description='Cloud Sync for Ruyi72')
     sub = parser.add_subparsers(dest='cmd')
     
     sub.add_parser('configure', help='Configure cloud service').add_argument('--token').add_argument('--client-id')

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows Paint Skill for OpenClaw"""
+"""Windows Paint Skill for Ruyi72"""
 import subprocess
 import sys
 import os

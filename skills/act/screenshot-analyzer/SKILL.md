@@ -70,7 +70,7 @@ python scripts/analyze_screenshot.py --cleanup --keep 10
 ```
 用户：帮我截个图看看
 AI：[执行截图]
-   截图成功！文件保存在: C:\Users\xxx\.openclaw\workspace\memory\screenshot-analyzer\screenshot_20260317_xxx.png
+   截图成功！文件保存在: C:\Users\xxx\.ruyi72\workspace\memory\screenshot-analyzer\screenshot_20260317_xxx.png
    现在帮你分析一下？
 
 用户：好
@@ -86,12 +86,12 @@ AI：[使用image-understanding技能分析截图]
 - **窗口截图**：使用Win32 API截取活动窗口
 
 ### 分析方式
-- 截图后调用OpenClaw已有的 `image-understanding` 技能进行视觉分析
+- 截图后调用如意72已有的 `image-understanding` 技能进行视觉分析
 
 ## 数据存储
 
 截图保存在：
-- `~/.openclaw/workspace/memory/screenshot-analyzer/`
+- `~/.ruyi72/workspace/memory/screenshot-analyzer/`
 
 ## 注意事项
 

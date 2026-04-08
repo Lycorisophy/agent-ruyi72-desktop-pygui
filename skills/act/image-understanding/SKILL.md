@@ -30,7 +30,7 @@ description: |
 ## 使用示例
 
 ```
-用户：C:\Users\LySoY\Pictures\photo.jpg
+用户：`C:\Users\YourName\Pictures\photo.jpg`（示例路径）
 助手：[分析图片内容]
 
 用户：图片中有什么？
@@ -45,7 +45,7 @@ description: |
 
 ## 技术实现
 
-使用 OpenClaw 内置的 `images_understand` 工具：
+使用 如意72 内置的 `images_understand` 工具：
 - 支持本地文件路径
 - 支持常见图片格式：jpg、jpeg、png、gif、bmp、webp
 - 自动处理路径中的空格和特殊字符

@@ -85,7 +85,7 @@ description: |
 ```yaml
 任务名称: 每日记忆总结
 触发时间: 每天 00:30
-工作目录: C:\Users\LySoY\.openclaw\workspace
+工作目录: `%USERPROFILE%\.ruyi72\workspace`（示例）
 执行命令: python skills/daily_summarizer/scripts/summarize.py
 ```
 

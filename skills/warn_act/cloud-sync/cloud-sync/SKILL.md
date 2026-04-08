@@ -64,10 +64,10 @@ description: |
 
 ## 安装说明
 
-1. 将此文件夹复制到 OpenClaw skills 目录
+1. 将此文件夹复制到 如意72 skills 目录
 2. 配置各平台的 API 凭证
 3. 安装所需 SDK：
    ```
    pip install onedrivesdk dropbox
    ```
-4. 重启 OpenClaw 即可使用
+4. 重启 如意72 即可使用

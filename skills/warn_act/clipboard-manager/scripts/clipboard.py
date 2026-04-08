@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/clipboard-manager")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/clipboard-manager")
 HISTORY_FILE = os.path.join(STORAGE_DIR, "history.json")
 
 

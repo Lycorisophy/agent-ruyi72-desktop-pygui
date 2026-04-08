@@ -7,7 +7,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/quick-commands")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/quick-commands")
 COMMANDS_FILE = os.path.join(STORAGE_DIR, "commands.json")
 
 

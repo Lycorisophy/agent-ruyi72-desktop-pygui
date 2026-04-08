@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * 微信公众号文章下载器 — OpenClaw Skill Script
+ * 微信公众号文章下载器 — Ruyi72 Skill Script
  *
  * 用法:
  *   node download.js "<文章URL>" [--output <输出目录>] [--no-image] [--no-video]
@@ -399,7 +399,7 @@ ${contentHtml}
     console.log(`  🖼️  ${imageFiles.length} 张图片`);
     console.log(`  🎬 ${videoFiles.length} 个视频/音频`);
 
-    // OpenClaw 自动附件
+    // Ruyi72 自动附件
     console.log(`MEDIA:${mdPath}`);
     console.log(`MEDIA:${htmlPath}`);
 }

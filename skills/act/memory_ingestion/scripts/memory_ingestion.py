@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 # 配置路径
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
+WORKSPACE = Path.home() / ".ruyi72" / "workspace"
 BUFFER_FILE = WORKSPACE / "memory" / "SHORT_TERM" / "buffer.md"
 FACTS_FILE = WORKSPACE / "memory" / "LONG_TERM" / "facts" / "personal_info.md"
 

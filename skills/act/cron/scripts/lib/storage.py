@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime
 
-CRON_DIR = os.path.expanduser("~/.openclaw/workspace/memory/cron")
+CRON_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/cron")
 JOBS_FILE = os.path.join(CRON_DIR, "jobs.json")
 RUNS_FILE = os.path.join(CRON_DIR, "runs.json")
 STATS_FILE = os.path.join(CRON_DIR, "stats.json")

@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/quick-notes")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/quick-notes")
 NOTES_FILE = os.path.join(STORAGE_DIR, "notes.json")
 
 

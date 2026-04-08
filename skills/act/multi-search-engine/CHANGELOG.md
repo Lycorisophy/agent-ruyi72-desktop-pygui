@@ -3,7 +3,7 @@
 ## v2.0.1 (2026-02-06)
 - Simplified documentation
 - Removed gov-related content
-- Optimized for ClawHub publishing
+- Optimized for skill packaging and distribution
 
 ## v2.0.0 (2026-02-06)
 - Added 9 international search engines

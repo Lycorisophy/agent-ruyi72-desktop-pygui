@@ -81,4 +81,4 @@ python scripts/cancel_notification.py --id 1
 ## 数据存储
 
 所有数据保存在本地：
-- `~/.openclaw/workspace/memory/desktop-notifier/notifications.json`
+- `~/.ruyi72/workspace/memory/desktop-notifier/notifications.json`

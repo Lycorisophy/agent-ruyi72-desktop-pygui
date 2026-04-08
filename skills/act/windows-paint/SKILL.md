@@ -30,7 +30,7 @@ Windows 画图技能。
 用户：打开画图
 助手：[打开 Windows 画图程序]
 
-用户：用画图打开 C:\Users\LySoY\Pictures\photo.jpg
+用户：用画图打开 `C:\Users\YourName\Pictures\photo.jpg`（示例路径）
 助手：[用画图打开指定图片]
 
 用户：我想编辑这张图片

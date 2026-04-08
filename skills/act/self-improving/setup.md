@@ -99,7 +99,7 @@ Only install it after the user explicitly agrees.
 
 If the user agrees:
 
-1. Run `clawhub install proactivity`
+1. 将 `proactivity` 技能包放入本项目 `skills/` 下合适层级（与内置技能结构一致），并重启应用或重新加载技能
 2. Read the installed `proactivity` skill
 3. Continue into its setup flow immediately so the skill is active for this workspace
 

@@ -69,9 +69,9 @@ Windows 磁盘管理技能，提供磁盘和分区的查看与管理功能。
 
 ## 安装说明
 
-1. 将此文件夹复制到 OpenClaw skills 目录
+1. 将此文件夹复制到 如意72 skills 目录
 2. 确保 Windows 系统已安装 PowerShell
-3. 重启 OpenClaw 即可使用
+3. 重启 如意72 即可使用
 
 ## 注意事项
 

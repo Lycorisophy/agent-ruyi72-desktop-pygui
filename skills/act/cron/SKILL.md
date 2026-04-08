@@ -19,9 +19,9 @@ Turn recurring intentions into structured local schedules.
 
 ## Storage
 All data is stored locally only under:
-- `~/.openclaw/workspace/memory/cron/jobs.json`
-- `~/.openclaw/workspace/memory/cron/runs.json`
-- `~/.openclaw/workspace/memory/cron/stats.json`
+- `~/.ruyi72/workspace/memory/cron/jobs.json`
+- `~/.ruyi72/workspace/memory/cron/runs.json`
+- `~/.ruyi72/workspace/memory/cron/stats.json`
 
 No external sync. No cloud storage. No third-party cron service.
 

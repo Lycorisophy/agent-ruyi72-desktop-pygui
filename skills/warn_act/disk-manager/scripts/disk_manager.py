@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Disk Manager Skill for OpenClaw
+Disk Manager Skill for Ruyi72
 Windows 磁盘管理技能，查看磁盘分区、空间信息和目录大小
 """
 

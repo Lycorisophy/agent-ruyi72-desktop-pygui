@@ -18,8 +18,8 @@ const os = require('os');
 const DEFAULT_THEME = 'lapis';
 const DEFAULT_HIGHLIGHT = 'solarized-light';
 const TOOLS_MD_PATHS = [
-    path.join(os.homedir(), '.openclaw', 'workspace-xina-gongzhonghao', 'TOOLS.md'),
-    path.join(os.homedir(), '.openclaw', 'workspace', 'TOOLS.md'),
+    path.join(os.homedir(), '.ruyi72', 'workspace-xina-gongzhonghao', 'TOOLS.md'),
+    path.join(os.homedir(), '.ruyi72', 'workspace', 'TOOLS.md'),
 ];
 
 // ─── 颜色输出（跨平台） ──────────────────────────────────────

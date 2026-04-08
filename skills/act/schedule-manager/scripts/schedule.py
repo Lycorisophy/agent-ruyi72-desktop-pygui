@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/schedule-manager")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/schedule-manager")
 DATA_FILE = os.path.join(STORAGE_DIR, "data.json")
 
 

@@ -17,7 +17,7 @@ except ImportError:
     sys.exit(1)
 
 # 存储目录
-STORAGE_DIR = os.path.expanduser("~/.openclaw/workspace/memory/screenshot-analyzer")
+STORAGE_DIR = os.path.expanduser("~/.ruyi72/workspace/memory/screenshot-analyzer")
 
 
 def ensure_dir():
@@ -106,7 +106,7 @@ $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $filename = "screenshot_window_$timestamp.png"
-$filepath = Join-Path $env:USERPROFILE ".openclaw\\workspace\\memory\\screenshot-analyzer\\screenshots\\$filename"
+$filepath = Join-Path $env:USERPROFILE ".ruyi72\\workspace\\memory\\screenshot-analyzer\\screenshots\\$filename"
 
 if (!(Test-Path (Split-Path $filepath))) { New-Item -ItemType Directory -Path (Split-Path $filepath) -Force | Out-Null }
 $bitmap.Save($filepath, [System.Drawing.Imaging.ImageFormat]::Png)

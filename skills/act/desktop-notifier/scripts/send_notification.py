@@ -80,7 +80,7 @@ def send_windows_notification(title, message, template="default"):
     $xml.LoadXml($template)
     
     $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("OpenClaw").Show($toast)
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Ruyi72").Show($toast)
     '''
     
     try:
