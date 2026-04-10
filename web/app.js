@@ -1486,6 +1486,87 @@ function closeMemoryModal() {
   overlay.setAttribute("aria-hidden", "true");
 }
 
+function openPendingIdentityModal() {
+  const overlay = document.getElementById("pending-identity-overlay");
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  refreshPendingIdentityList();
+}
+
+function closePendingIdentityModal() {
+  const overlay = document.getElementById("pending-identity-overlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+}
+
+async function refreshPendingIdentityList() {
+  const el = document.getElementById("pending-identity-list");
+  if (!el) return;
+  el.textContent = "加载中…";
+  try {
+    const res = await api().list_pending_identity_merges(100);
+    const items = res && Array.isArray(res.items) ? res.items : [];
+    if (!items.length) {
+      el.textContent = "当前没有待合并条目。";
+      return;
+    }
+    el.innerHTML = "";
+    items.forEach((it) => {
+      const row = document.createElement("div");
+      row.className = "pending-identity-row";
+      const tid = it.identity_target || "memory";
+      const sum = it.summary || "";
+      const k = it.key || "";
+      const v = it.value || "";
+      const pid = it.id || "";
+      row.innerHTML =
+        `<p class="pending-identity-summary"><strong>${escapeHtml(
+          String(sum)
+        )}</strong> <code>${escapeHtml(String(k))}</code> = ${escapeHtml(
+          String(v)
+        )}</p>` +
+        `<p class="pending-identity-meta">目标: ${escapeHtml(
+          String(tid)
+        )} · id: <code>${escapeHtml(String(pid))}</code></p>`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-small btn-primary";
+      btn.textContent = "应用";
+      btn.addEventListener("click", async () => {
+        if (!window.confirm("确定将本条合并到身份文件并从队列移除？")) return;
+        setBusy(true);
+        try {
+          const ar = await api().apply_pending_identity_merge(pid);
+          if (!ar.ok) {
+            appendMessage(
+              "assistant",
+              "应用失败：" + (ar.error || "未知错误"),
+              true
+            );
+          } else {
+            appendMessage(
+              "assistant",
+              "已合并到身份文件：" + (ar.applied_to || ""),
+              false
+            );
+            await refreshPendingIdentityList();
+          }
+        } catch (e) {
+          appendMessage("assistant", String(e), true);
+        } finally {
+          setBusy(false);
+        }
+      });
+      row.appendChild(btn);
+      el.appendChild(row);
+    });
+  } catch (e) {
+    el.textContent = "加载失败：" + String(e);
+  }
+}
+
 function setMemoryModalBusy(busy) {
   const ta = document.getElementById("memory-input");
   const cancel = document.getElementById("memory-cancel");
@@ -2811,6 +2892,11 @@ function init() {
       closeTeamModal();
       return;
     }
+    const pendOv = document.getElementById("pending-identity-overlay");
+    if (pendOv && !pendOv.classList.contains("hidden")) {
+      closePendingIdentityModal();
+      return;
+    }
     const overlay = document.getElementById("memory-modal-overlay");
     if (!overlay || overlay.classList.contains("hidden")) return;
     closeMemoryModal();
@@ -2826,25 +2912,44 @@ function init() {
     setGlobalLoading(true);
     setGlobalLoadingText("正在提取记忆，请稍候…");
     setMemoryModalBusy(true);
+    const memT0 = performance.now();
+    const memIso = new Date().toISOString();
+    console.info("[Ruyi memory extract] 请求开始", {
+      at: memIso,
+      charCount: text.length,
+      sessionId: currentSessionId || "",
+    });
     try {
       const res = await withLlmApiLog("extract_memory", () =>
-        api().extract_memory(text)
+        api().extract_memory(text, currentSessionId || "")
       );
+      const memMs = Math.round(performance.now() - memT0);
+      console.info("[Ruyi memory extract] 请求结束", {
+        wallMs: memMs,
+        ok: res.ok,
+        error: res.error || null,
+        stats: res.stats || null,
+      });
       const st = res.stats || {};
+      const pid = st.pending_identity || 0;
       let msg = "";
       if (!res.ok) {
         msg =
           "记忆提取失败：" + (res.error || "未知错误") + `（已写入：事实 ${
             st.facts || 0
-          } 条，事件 ${st.events || 0} 条，关系 ${st.relations || 0} 条）`;
+          } 条，永驻待合并 ${pid} 条，事件 ${st.events || 0} 条，关系 ${st.relations || 0} 条）`;
         appendMessage("assistant", msg, true);
       } else {
-        msg = `已提取记忆：事实 ${st.facts || 0} 条，事件 ${
+        msg = `已提取记忆：事实 ${st.facts || 0} 条，永驻待合并 ${pid} 条，事件 ${
           st.events || 0
         } 条，关系 ${st.relations || 0} 条。`;
         appendMessage("assistant", msg, false);
       }
     } catch (e) {
+      console.warn("[Ruyi memory extract] 请求异常", {
+        wallMs: Math.round(performance.now() - memT0),
+        err: String(e),
+      });
       appendMessage("assistant", "记忆提取异常：" + String(e), true);
     } finally {
       setGlobalLoading(false);
@@ -2905,6 +3010,19 @@ function init() {
         setBusy(false);
       }
     });
+
+  const btnPend = document.getElementById("btn-pending-identity");
+  if (btnPend) btnPend.addEventListener("click", () => openPendingIdentityModal());
+  const pendClose = document.getElementById("pending-identity-close");
+  if (pendClose) pendClose.addEventListener("click", () => closePendingIdentityModal());
+  const pendRefresh = document.getElementById("pending-identity-refresh");
+  if (pendRefresh) pendRefresh.addEventListener("click", () => refreshPendingIdentityList());
+  const pendOverlay = document.getElementById("pending-identity-overlay");
+  if (pendOverlay) {
+    pendOverlay.addEventListener("click", (ev) => {
+      if (ev.target.id === "pending-identity-overlay") closePendingIdentityModal();
+    });
+  }
 }
 
 waitForPywebview()

@@ -67,6 +67,9 @@
     <div class="sidebar-footer">
       <button type="button" id="btn-memory-save" class="btn btn-small">记住</button>
       <button type="button" id="btn-memory-view" class="btn btn-small">浏览记忆</button>
+      <button type="button" id="btn-pending-identity" class="btn btn-small" title="查看并应用 tier=permanent 的待合并条目">
+        永驻待合并
+      </button>
     </div>
   </aside>
   <div class="content">
@@ -430,7 +433,10 @@
   <div id="memory-modal-overlay" class="memory-modal-overlay hidden" aria-hidden="true">
     <div class="memory-modal" role="dialog" aria-labelledby="memory-modal-title">
       <h3 id="memory-modal-title" class="memory-modal-title">请输入我要记住的内容</h3>
-      <p class="memory-modal-hint">可粘贴对话摘要或原文，确定后将由大模型提取事实、事件与关系并保存。</p>
+      <p class="memory-modal-hint">
+        可粘贴对话摘要或原文，确定后将由大模型提取事实、事件与关系并保存。内容请勿过长（默认约 1.6
+        万字符为上限，超出请分段提取或在 ruyi72.yaml 调整 memory.extract_max_input_chars）；只粘贴与要记住相关的段落可加快响应。
+      </p>
       <textarea
         id="memory-input"
         class="memory-modal-textarea"
@@ -441,6 +447,21 @@
       <div class="memory-modal-actions">
         <button type="button" id="memory-cancel" class="btn">取消</button>
         <button type="button" id="memory-confirm" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 永驻记忆：待合并队列 -->
+  <div id="pending-identity-overlay" class="memory-modal-overlay hidden" aria-hidden="true">
+    <div class="memory-modal pending-identity-modal" role="dialog" aria-labelledby="pending-identity-title">
+      <h3 id="pending-identity-title" class="memory-modal-title">永驻记忆待合并</h3>
+      <p class="memory-modal-hint">
+        以下为将追加到 USER.md / SOUL.md / MEMORY.md 的待确认条目。点击「应用」后才会写入磁盘并从队列移除。
+      </p>
+      <div id="pending-identity-list" class="pending-identity-list" aria-live="polite"></div>
+      <div class="memory-modal-actions">
+        <button type="button" id="pending-identity-close" class="btn">关闭</button>
+        <button type="button" id="pending-identity-refresh" class="btn btn-primary">刷新</button>
       </div>
     </div>
   </div>

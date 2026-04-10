@@ -144,7 +144,9 @@ def _one_tick(svc: ConversationService, store: SessionStore, mcfg: MemoryAutoExt
 
         _LOG.debug("auto memory extract session=%s chars=%s", sid[:8], len(stripped))
         with svc.llm_busy():
-            result = extract_and_store_from_text(svc.llm_config(), text)
+            result = extract_and_store_from_text(
+                svc._cfg, text, source_session_id=sid
+            )
 
         if result.get("error"):
             _LOG.warning(
@@ -156,9 +158,10 @@ def _one_tick(svc: ConversationService, store: SessionStore, mcfg: MemoryAutoExt
 
         set_processed_count(sid, n)
         _LOG.info(
-            "auto memory ok session=%s facts=%s events=%s relations=%s",
+            "auto memory ok session=%s facts=%s pending_id=%s events=%s relations=%s",
             sid[:8],
             result.get("facts", 0),
+            result.get("pending_identity", 0),
             result.get("events", 0),
             result.get("relations", 0),
         )

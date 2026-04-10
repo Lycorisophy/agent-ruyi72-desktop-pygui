@@ -741,7 +741,8 @@ class ConversationService:
 
     def _followup_llm_after_action_card(self) -> str | None:
         """
-        卡片确认产生的 user 摘要已写入历史后，自动请求模型下一条回复。
+        仅由「确认」或「超时自动确认」路径调用：user 摘要已写入历史后，自动请求模型下一条回复。
+        「拒绝」不得调用本方法，以免再次触发模型输出卡片。
         拟人模式：使用与对话相同的一次 Chat（不走路径异步拟人管道），避免无回复。
         """
         self.ensure_session()
@@ -893,7 +894,11 @@ class ConversationService:
         self._store.save_messages(self._active_id, self._messages)
         self._meta, self._messages = self._store.load(self._active_id)
 
-        followup_error = self._followup_llm_after_action_card()
+        followup_error = (
+            None
+            if act == "reject"
+            else self._followup_llm_after_action_card()
+        )
         return {
             "ok": True,
             "meta": self._meta.model_dump(),

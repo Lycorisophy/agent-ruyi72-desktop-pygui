@@ -7,11 +7,15 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from src.agent.action_card import sanitize_card_from_storage
+from src.storage.memory_store import default_store
+
+if TYPE_CHECKING:
+    from src.config import RuyiConfig
 
 Mode = Literal["chat", "react", "persona"]
 SessionVariant = Literal["standard", "team", "knowledge"]
@@ -65,9 +69,10 @@ def _normalize_avatar_ref(ref: str) -> str:
 
 
 class SessionStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, ruyi_cfg: RuyiConfig | None = None) -> None:
         self._root = root
         self._root.mkdir(parents=True, exist_ok=True)
+        self._ruyi_cfg = ruyi_cfg
 
     @property
     def root(self) -> Path:
@@ -330,6 +335,24 @@ class SessionStore:
             meta = SessionMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
             meta.touch()
             self._write_meta(d, meta)
+        self._maybe_reindex_messages_for_memory(session_id, messages)
+
+    def _maybe_reindex_messages_for_memory(
+        self, session_id: str, messages: list[dict[str, Any]]
+    ) -> None:
+        cfg = self._ruyi_cfg
+        if cfg is None or not cfg.memory.messages_index_enabled:
+            return
+        if cfg.memory.backend not in ("dual", "sqlite"):
+            return
+        try:
+            from src.storage.memory_sqlite import replace_session_messages_index
+
+            replace_session_messages_index(
+                cfg, default_store().root, session_id, messages
+            )
+        except Exception:
+            pass
 
     def update_meta(
         self,

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -29,11 +30,17 @@ from src.scheduler import start_builtin_scheduler_worker  # noqa: E402
 from src.scheduler import crud as scheduler_crud  # noqa: E402
 from src.scheduler.runs_reader import list_task_run_entries  # noqa: E402
 from src.agent.memory_extractor import extract_and_store_from_text  # noqa: E402
-from src.agent.memory_tools import browse_memory_formatted  # noqa: E402
+from src.agent.memory_tools import (  # noqa: E402
+    browse_memory_formatted,
+    get_recent_memory_for_api,
+)
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
 from src.skills.loader import get_registry  # noqa: E402
 from src.storage.memory_store import MemoryStore, default_store  # noqa: E402
+from src.storage.memory_sqlite import maybe_migrate_jsonl  # noqa: E402
 from src.storage.session_store import SessionStore  # noqa: E402
+
+_LOG_EXTRACT_MEMORY = logging.getLogger("ruyi72.extract_memory")
 
 
 class Api:
@@ -258,23 +265,44 @@ class Api:
             from_timeout=bool(from_timeout),
         )
 
-    def extract_memory(self, text: str) -> dict:
+    def extract_memory(self, text: str, session_id: str | None = None) -> dict:
         """从前端提供的一段文本中抽取记忆单元并保存，返回数量统计。"""
+        sid = (session_id or "").strip() or None
+        raw = text or ""
+        n_chars = len(raw)
+        t_api = time.perf_counter()
+        _LOG_EXTRACT_MEMORY.info(
+            "extract_memory entry chars=%d session_id=%s extract_llm_timeout_sec=%d "
+            "llm_provider=%s llm_model=%s base_url=%s",
+            n_chars,
+            sid or "(none)",
+            int(self._cfg.memory.extract_llm_timeout_sec),
+            self._cfg.llm.provider,
+            self._cfg.llm.model,
+            (self._cfg.llm.base_url or "")[:80] or "(empty)",
+        )
         with self._svc.llm_busy():
-            result = extract_and_store_from_text(self._cfg.llm, text or "")
-        ok = True
+            result = extract_and_store_from_text(
+                self._cfg, raw, source_session_id=sid
+            )
+        api_ms = (time.perf_counter() - t_api) * 1000.0
         error = result.pop("error", None)
-        if error:
-            ok = False
-        return {"ok": ok, "stats": result, "error": error}
+        ok = error is None
+        stats = dict(result)
+        _LOG_EXTRACT_MEMORY.info(
+            "extract_memory done api_wall_ms=%.0f ok=%s stats=%s error=%s",
+            api_ms,
+            ok,
+            stats,
+            (error or "")[:300],
+        )
+        return {"ok": ok, "stats": stats, "error": error}
 
     def browse_memory(self, limit: int | None = None) -> dict:
         """浏览最近的记忆条目，返回格式化后的文本和原始结构。"""
         store: MemoryStore = default_store()
         n = int(limit or 10)
-        facts = store.read_recent("facts", n)
-        events = store.read_recent("events", n)
-        relations = store.read_recent("relations", n)
+        facts, events, relations = get_recent_memory_for_api(n, store=store)
         text = browse_memory_formatted(n, store=store)
         return {
             "ok": True,
@@ -283,6 +311,24 @@ class Api:
             "events": events,
             "relations": relations,
         }
+
+    def list_pending_identity_merges(self, limit: int | None = None) -> dict:
+        """列出永驻记忆待合并队列（pending_identity.jsonl）。"""
+        store = default_store()
+        lim = int(limit) if limit is not None else 100
+        lim = max(1, min(500, lim))
+        items = store.read_recent_pending_identity(lim)
+        return {"ok": True, "items": items}
+
+    def preview_pending_identity_merge(self, pending_id: str) -> dict:
+        from src.storage.pending_identity_merge import preview_pending_identity_merge as _prev
+
+        return _prev(default_store(), pending_id or "")
+
+    def apply_pending_identity_merge(self, pending_id: str) -> dict:
+        from src.storage.pending_identity_merge import apply_pending_identity_merge as _apply
+
+        return _apply(default_store(), pending_id or "")
 
     def list_skills_compact(self) -> list[dict]:
         reg = get_registry()
@@ -334,6 +380,10 @@ class Api:
 
 def main() -> None:
     cfg = load_config()
+    try:
+        maybe_migrate_jsonl(cfg, default_store().root)
+    except Exception:
+        pass
     set_debug_from_app(cfg.app.debug)
     if cfg.app.debug or os.environ.get("RUYI72_DEBUG", "").strip().lower() in (
         "1",
@@ -352,7 +402,7 @@ def main() -> None:
             format="%(levelname)s %(name)s: %(message)s",
             force=True,
         )
-    store = SessionStore(resolve_sessions_root(cfg))
+    store = SessionStore(resolve_sessions_root(cfg), ruyi_cfg=cfg)
     svc = ConversationService(
         cfg,
         store,

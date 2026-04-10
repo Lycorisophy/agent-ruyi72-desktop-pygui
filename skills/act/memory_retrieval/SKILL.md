@@ -1,9 +1,8 @@
 ---
 name: memory_retrieval
 description: |
-  🔍 记忆检索技能。
-  功能: 通过RAG检索相关记忆并注入上下文。
-  触发条件: 用户询问"昨天..."、"之前..."、"我记得..."时。
+  🔍 记忆检索（通用 RAG 叙事模板）。
+  在如意72桌面 ReAct 中请优先用内置工具 browse_memory / search_memory / search_memory_semantic / search_history，勿套用下文独立向量库流程。
 ---
 
 # 记忆检索技能
@@ -11,11 +10,24 @@ description: |
 ## 元信息
 - name: memory_retrieval
 - version: 1.0.0
-- description: 通过RAG检索相关记忆并注入上下文
+- description: 通过RAG检索相关记忆并注入上下文（通用模板；宿主见下节）
 - trigger: 用户询问过去事件时 / 用户说"我记得..."时
 
 ## 功能说明
 当用户询问关于过去的问题时，通过向量检索找到最相关的记忆片段，并将结果注入AI的上下文。
+
+## 宿主 ruyi72 集成说明
+
+在 **如意72 桌面应用 ReAct** 中，全局记忆由应用内置工具提供，**不要**假设存在下文所述的独立「向量数据库服务」或自定义脚本管线。请按场景选用：
+
+| 场景 | 工具 |
+|------|------|
+| 看最近摘要 | `browse_memory` |
+| 关键词搜事实/事件/关系（FTS 或 JSONL 子串） | `search_memory` |
+| 语义近义搜重要事实 | `search_memory_semantic`（需 `memory.vector_enabled` + Ollama embedding） |
+| 搜已索引的会话消息 | `search_history`（需 `memory.messages_index_enabled`） |
+
+下文「处理流程」「输入参数」等保留为 **无宿主工具时的通用 RAG 设计参考**；在如意72 内以工具说明与配置为准。
 
 ## 检索示例
 - "我昨天吃了什么？" → 检索昨天相关记忆
@@ -26,7 +38,8 @@ description: |
 - query: 用户当前问题
 - time_range: 时间范围（可选，默认30天）
 
-## 处理流程
+## 处理流程（通用模板；非如意72宿主时可参考）
+
 1. 将用户问题转换为向量
 2. 在向量数据库中检索 Top-K 相关记忆
 3. 结合时间上下文过滤

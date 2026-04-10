@@ -1808,3 +1808,36 @@ body.split-active .pane-secondary {
     transform: rotate(360deg);
   }
 }
+
+/* 永驻待合并列表 */
+.pending-identity-modal .pending-identity-list {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  margin: 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--neutral-border);
+  border-radius: 8px;
+  background: var(--neutral-925);
+  font-size: 13px;
+}
+
+.pending-identity-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--neutral-border);
+}
+
+.pending-identity-row:last-child {
+  border-bottom: none;
+}
+
+.pending-identity-summary {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+  line-height: 1.45;
+}
+
+.pending-identity-meta {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}

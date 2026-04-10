@@ -179,7 +179,8 @@ flowchart TB
 
 **目的**：跨会话结构化存储事实、事件、关系；支持关键词检索与在 ReAct 中的只读工具。
 
-**专篇**：[memory-system.md](memory-system.md)
+**专篇（当前实现）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v1.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v1.0）.md)  
+**目标设计（v2.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)
 
 **相关代码**：[src/storage/memory_store.py](../src/storage/memory_store.py)、[src/agent/memory_extractor.py](../src/agent/memory_extractor.py)、[src/agent/memory_tools.py](../src/agent/memory_tools.py)；前端「记住 / 浏览记忆」经 `Api.extract_memory` / `browse_memory`。
 

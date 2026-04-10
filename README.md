@@ -51,7 +51,7 @@ pip install -r requirements.txt
 
 6. **会话与历史目录（可选）**：默认将每个会话保存到 `%USERPROFILE%\.ruyi72\sessions\<sessionId>\`（含 `meta.json` 与 `messages.json`）。可在配置中设置 `storage.sessions_root` 指向自定义根目录。
 
-7. **闲时自动记忆抽取（可选）**：配置块 `memory_auto_extract`（默认 `enabled: false`）在进程**空闲**时按会话游标从各会话 `messages.json` 增量调用抽取器；游标持久化在 `%USERPROFILE%\.ruyi72\memory_auto_extract_state.json`。字段说明见 [config/ruyi72.example.yaml](config/ruyi72.example.yaml) 与 [docs/memory-system.md](docs/memory-system.md)。
+7. **闲时自动记忆抽取（可选）**：配置块 `memory_auto_extract`（默认 `enabled: false`）在进程**空闲**时按会话游标从各会话 `messages.json` 增量调用抽取器；游标持久化在 `%USERPROFILE%\.ruyi72\memory_auto_extract_state.json`。字段说明见 [config/ruyi72.example.yaml](config/ruyi72.example.yaml) 与记忆设计 **[v1.0 实现](docs/AI智能体ruyi72%20记忆系统（永驻+事件）设计（v1.0）.md)**；演进目标见 **[v2.0](docs/AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)**。
 
 8. **内置定时任务（可选）**：配置块 `builtin_scheduler`；计划持久化在会话目录 `scheduled_tasks.json` 与 `%USERPROFILE%\.ruyi72\global_scheduled_tasks.json`，由后端线程在空闲时触发；可通过 `pywebview.api.list_scheduled_tasks` / `save_scheduled_task` / `delete_scheduled_task` 管理。详见 [docs/scheduled-tasks-design.md](docs/scheduled-tasks-design.md) 与 [docs/module-design.md](docs/module-design.md) §14。
 
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 - **团队会话**：多模型链式委派，槽位与约束见 [docs/agent-team-mode.md](docs/agent-team-mode.md)。
 - **知识库会话**：将工作区视为知识库根目录，按预设侧重（收录、摘要、问答等）注入系统提示。
 - **工作区**：非团队路径下多数模式需有效目录；工具与目录预览均校验路径，禁止越界访问。
-- **记忆**：跨会话结构化存储与检索；支持手动「记忆提取」与可选 **闲时自动抽取**（`memory_auto_extract`）；详情见 [docs/memory-system.md](docs/memory-system.md)。
+- **记忆**：跨会话结构化存储与检索；支持手动「记忆提取」与可选 **闲时自动抽取**（`memory_auto_extract`）。**实现**见 [docs/AI智能体ruyi72 记忆系统（永驻+事件）设计（v1.0）.md](docs/AI智能体ruyi72%20记忆系统（永驻+事件）设计（v1.0）.md)，**演进目标**见 [docs/AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md](docs/AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)。
 - **内置定时任务**：会话级与全局计划（`noop` / 向会话追加系统提示等），配置 `builtin_scheduler`；设计见 [docs/scheduled-tasks-design.md](docs/scheduled-tasks-design.md)。
 - **界面**：会话列表与全文搜索、主题色、**头部「模型与 API 设置」**与 **「身份与记忆提示词」**（`SOUL.md` / `USER.md` / `MEMORY.md`）、右侧任务上下文与技能列表、提示词模板条、分屏下列出工作区目录元信息（`list_workspace_preview`）等。
 
@@ -82,7 +82,7 @@ pip install -r requirements.txt
 - **索引**：[docs/README.md](docs/README.md)
 - **模块设计总览**：[docs/module-design.md](docs/module-design.md)
 - **团队模式**：[docs/agent-team-mode.md](docs/agent-team-mode.md)
-- **记忆系统**：[docs/memory-system.md](docs/memory-system.md)
+- **记忆系统**：[v1.0 当前实现](docs/AI智能体ruyi72%20记忆系统（永驻+事件）设计（v1.0）.md) · [v2.0 目标架构](docs/AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)
 
 ## 运行
 
@@ -106,7 +106,8 @@ agent-ruyi72-desktop-pygui/
 │   ├── README.md
 │   ├── module-design.md
 │   ├── agent-team-mode.md
-│   └── memory-system.md
+│   ├── AI智能体ruyi72 记忆系统（永驻+事件）设计（v1.0）.md
+│   └── AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md
 ├── resources/
 │   └── knowledge_base/          # 知识库会话通用与预设提示片段
 ├── skills/                      # 根目录技能（SKILL.md）

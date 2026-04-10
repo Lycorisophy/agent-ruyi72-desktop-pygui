@@ -69,6 +69,19 @@ persona:
 #   min_chars_to_extract: 40
 #   max_sessions_scanned: 30
 
+# 长期记忆 v2：SQLite + FTS、向量、会话历史索引（见 docs 记忆系统设计 v2）
+# embedding:
+#   model: qwen3-embedding:8b
+#   base_url: ""   # 空则沿用 llm.base_url（Ollama）
+# memory:
+#   backend: jsonl   # jsonl | dual | sqlite；dual/sqlite 时启动会尝试从 *.jsonl 一次性导入 memory.db
+#   sqlite_path: "" # 空则为 %USERPROFILE%\.ruyi72\memory\memory.db
+#   vector_enabled: false   # true 且 llm.provider=ollama 时，important 事实写入后异步量化为向量
+#   messages_index_enabled: false  # true 时每次保存会话消息会重建该会话在 memory.db 的 FTS（供 search_history）
+#   extract_llm_timeout_sec: 300  # 主动/闲时记忆抽取的 LLM 读超时（秒，60～3600）；大模型或长粘贴可调高如 600
+#   extract_max_input_chars: 16000  # 单次抽取粘贴文本最大字符数；超出则拒绝（可分段提取或调大）
+#   extract_max_tokens: 4096      # 抽取专用生成 token 上限，与 llm.max_tokens 独立，减轻慢推理与超长 JSON
+
 # 内置会话级 + 全局定时任务调度（计划见 docs/scheduled-tasks-design.md）
 # builtin_scheduler:
 #   enabled: true

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Any
@@ -17,6 +18,8 @@ from src.debug_log import (
     log_llm_response,
     log_llm_summary,
 )
+
+_LOG_HTTP = logging.getLogger("ruyi72.llm")
 
 
 def _messages_from_body(body: dict[str, Any]) -> list[dict[str, str]]:
@@ -108,10 +111,17 @@ class OllamaClient:
         *,
         model_override: str | None = None,
         caller: str = "OllamaClient.chat",
+        read_timeout_sec: float | None = None,
+        max_tokens_override: int | None = None,
     ) -> str:
         model_name = (model_override or "").strip() or self._cfg.model
         key = resolve_llm_api_key(self._cfg)
         trust = effective_trust_env(self._cfg)
+        max_tokens = (
+            int(max_tokens_override)
+            if max_tokens_override is not None
+            else int(self._cfg.max_tokens)
+        )
 
         if is_openai_cloud(self._cfg):
             if not key:
@@ -125,9 +135,11 @@ class OllamaClient:
                 "messages": messages,
                 "stream": False,
                 "temperature": self._cfg.temperature,
-                "max_tokens": self._cfg.max_tokens,
+                "max_tokens": max_tokens,
             }
-            return self._post_chat_json(chat_url, headers, body, trust, caller)
+            return self._post_chat_json(
+                chat_url, headers, body, trust, caller, read_timeout_sec=read_timeout_sec
+            )
 
         if self._cfg.provider != "ollama":
             raise OllamaClientError(f"未知 llm.provider: {self._cfg.provider!r}")
@@ -144,7 +156,7 @@ class OllamaClient:
                 "messages": messages,
                 "stream": False,
                 "temperature": self._cfg.temperature,
-                "max_tokens": self._cfg.max_tokens,
+                "max_tokens": max_tokens,
             }
         else:
             body = {
@@ -155,11 +167,13 @@ class OllamaClient:
                 "think": False,
                 "options": {
                     "temperature": self._cfg.temperature,
-                    "num_predict": self._cfg.max_tokens,
+                    "num_predict": max_tokens,
                 },
             }
 
-        return self._post_chat_json(chat_url, headers, body, trust, caller)
+        return self._post_chat_json(
+            chat_url, headers, body, trust, caller, read_timeout_sec=read_timeout_sec
+        )
 
     def _post_chat_json(
         self,
@@ -168,6 +182,8 @@ class OllamaClient:
         body: dict[str, Any],
         trust: bool,
         caller: str,
+        *,
+        read_timeout_sec: float | None = None,
     ) -> str:
         model_name = str(body.get("model") or self._cfg.model)
         msgs = _messages_from_body(body)
@@ -202,9 +218,18 @@ class OllamaClient:
                 reply_chars=reply_chars,
             )
 
+        read_sec = 120.0 if read_timeout_sec is None else float(read_timeout_sec)
+        _LOG_HTTP.info(
+            "http chat POST begin caller=%s model=%s read_timeout_sec=%.1f "
+            "connect_timeout_sec=10.0 url=%s",
+            caller,
+            model_name,
+            read_sec,
+            chat_url,
+        )
         try:
             with httpx.Client(
-                timeout=httpx.Timeout(120.0, connect=10.0),
+                timeout=httpx.Timeout(read_sec, connect=10.0),
                 trust_env=trust,
             ) as client:
                 r = client.post(chat_url, json=body, headers=headers)
@@ -216,8 +241,19 @@ class OllamaClient:
                 f" ({e!s})"
             ) from e
         except httpx.TimeoutException as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
             log_llm_response(caller, error=f"Timeout: {e!s}")
             _sum(False, error=f"Timeout: {e!s}")
+            _LOG_HTTP.warning(
+                "http chat POST TIMEOUT caller=%s read_timeout_sec=%.1f elapsed_ms=%.0f "
+                "url=%s model=%s detail=%s",
+                caller,
+                read_sec,
+                elapsed_ms,
+                chat_url,
+                model_name,
+                str(e)[:200],
+            )
             raise OllamaClientError(f"请求超时，请稍后重试或检查模型是否过大。 ({e!s})") from e
 
         if r.status_code == 404:
@@ -284,6 +320,14 @@ class OllamaClient:
             log_llm_response(caller, error=str(err), http_status=r.status_code)
             _sum(False, http_status=r.status_code, error=str(err)[:400])
             raise
+        elapsed_ok_ms = (time.perf_counter() - t0) * 1000.0
+        _LOG_HTTP.info(
+            "http chat POST ok caller=%s http_status=%d elapsed_ms=%.0f reply_chars=%d",
+            caller,
+            r.status_code,
+            elapsed_ok_ms,
+            len(text),
+        )
         log_llm_response(caller, text=text, http_status=r.status_code)
         _sum(True, http_status=r.status_code, reply_chars=len(text))
         return text
@@ -319,3 +363,56 @@ class OllamaClient:
 
 def ollama_chat(cfg: LLMConfig, messages: list[dict[str, str]]) -> str:
     return OllamaClient(cfg).chat(messages, caller="ollama_chat")
+
+
+def ollama_embed_one(
+    cfg: LLMConfig,
+    model: str,
+    text: str,
+    *,
+    caller: str = "ollama_embed_one",
+) -> list[float]:
+    """POST /api/embed；仅支持 provider=ollama。"""
+    if cfg.provider != "ollama":
+        raise OllamaClientError("当前仅在本机 Ollama（llm.provider=ollama）下支持 embedding。")
+    t = (text or "").strip()
+    if not t:
+        raise OllamaClientError("embedding 输入文本为空。")
+    m = (model or "").strip() or cfg.model
+    base = _base_prefix(cfg)
+    embed_url = urljoin(base, "api/embed")
+    key = resolve_llm_api_key(cfg)
+    trust = effective_trust_env(cfg)
+    headers: dict[str, str] = {}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    body: dict[str, Any] = {"model": m, "input": t}
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(120.0, connect=10.0),
+            trust_env=trust,
+        ) as client:
+            r = client.post(embed_url, json=body, headers=headers)
+    except httpx.ConnectError as e:
+        raise OllamaClientError(
+            "无法连接 Ollama 以获取 embedding。请确认服务已启动且 base_url 正确。"
+            f" ({e!s})"
+        ) from e
+    except httpx.TimeoutException as e:
+        raise OllamaClientError(f"embedding 请求超时。 ({e!s})") from e
+    if r.status_code >= 400:
+        detail = (r.text or "")[:500]
+        raise OllamaClientError(
+            f"Ollama /api/embed 返回 HTTP {r.status_code}。{detail}"
+        )
+    try:
+        data = r.json()
+    except json.JSONDecodeError as e:
+        raise OllamaClientError(f"无法解析 embedding 响应 JSON。 ({e!s})") from e
+    emb = data.get("embedding")
+    if not isinstance(emb, list) or not emb:
+        raise OllamaClientError("Ollama embedding 响应缺少非空 embedding 数组。")
+    try:
+        return [float(x) for x in emb]
+    except (TypeError, ValueError) as e:
+        raise OllamaClientError(f"embedding 元素非数值。 ({e!s})") from e

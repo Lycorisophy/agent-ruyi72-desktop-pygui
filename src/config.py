@@ -132,6 +132,31 @@ class TeamConfig(BaseModel):
     models: list[TeamModelEntry] = Field(default_factory=list)
 
 
+class EmbeddingConfig(BaseModel):
+    """Ollama /api/embed；base_url 为空时沿用 llm.base_url。"""
+
+    model: str = "qwen3-embedding:8b"
+    base_url: str = ""
+
+
+class MemoryConfig(BaseModel):
+    """长期记忆：向量索引与存储后端（见 docs 记忆 v2）。"""
+
+    vector_enabled: bool = False
+    # sqlite 路径；空则使用 ~/.ruyi72/memory/memory.db
+    sqlite_path: str = ""
+    # jsonl | sqlite | dual（dual 为过渡期双写）
+    backend: Literal["jsonl", "sqlite", "dual"] = "jsonl"
+    # 为 True 时，每次保存会话消息会重建该会话在 memory.db 中的 FTS 索引（见 memory_messages）
+    messages_index_enabled: bool = False
+    # 主动/闲时记忆抽取单次 LLM 请求的读超时（秒）；大模型或长文本可调高
+    extract_llm_timeout_sec: int = Field(default=300, ge=60, le=3600)
+    # 单次抽取用户文本最大字符数（含中英文）；超出则拒绝请求，避免超大上下文拖慢或超时
+    extract_max_input_chars: int = Field(default=16000, ge=2000, le=500000)
+    # 抽取专用生成上限（与主对话 llm.max_tokens 独立，仅影响记忆抽取请求）
+    extract_max_tokens: int = Field(default=4096, ge=256, le=131072)
+
+
 class MemoryAutoExtractConfig(BaseModel):
     """闲时从会话历史自动抽取记忆（游标去重）；默认关闭以免消耗 token。"""
 
@@ -155,6 +180,8 @@ class RuyiConfig(BaseModel):
     version: int = 1
     app: AppConfig = Field(default_factory=AppConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
@@ -223,6 +250,14 @@ def load_config() -> RuyiConfig:
     except OSError:
         pass
     return RuyiConfig.model_validate(merged)
+
+
+def embedding_http_llm_cfg(cfg: RuyiConfig) -> LLMConfig:
+    """供 /api/embed 请求：可单独指定 embedding.base_url。"""
+    u = (cfg.embedding.base_url or "").strip()
+    if u:
+        return cfg.llm.model_copy(update={"base_url": u})
+    return cfg.llm
 
 
 def save_llm_local_yaml(llm: LLMConfig) -> Path:
