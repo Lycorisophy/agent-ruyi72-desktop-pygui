@@ -10,6 +10,9 @@ from src.config import RuyiConfig, embedding_http_llm_cfg
 from src.debug_log import is_debug
 from src.llm.ollama import OllamaClient, OllamaClientError, ollama_embed_one
 from src.storage.memory_store import (
+    normalize_event_temporal_kind,
+    normalize_event_world_kind,
+    normalize_planned_window_dict,
     RELATION_TYPE_LABELS,
     RELATION_TYPE_MAX,
     RELATION_TYPE_MIN,
@@ -77,6 +80,10 @@ EXTRACT_SYSTEM_PROMPT = """
 2. events：事件；可增加 source_session_id（若未知可省略）、subject_actors（主体）、object_actors（客体）、
    triggers（触发词数组）、assertion：actual | negative | possible | not_occurred（默认 actual）。
    仍可使用 actors 表示参与者（兼容旧格式）。
+   v3.0 可选字段（缺省则后端默认 world_kind=real、temporal_kind=past、planned_window 为空对象）：
+   - world_kind：real（真实世界）| fictional（虚构/角色扮演）| hypothetical（假设/思想实验）| unknown（无法区分）
+   - temporal_kind：past | present | future_planned | future_uncertain | atemporal
+   - planned_window：对象，可与 future_planned 配合，例如 {"text": "下周", "resolution": "fuzzy"} 或含 start/end 的 ISO 时间
 3. relations：事件之间的关系，用整数 relation_type 表示类型（见下表）
 
 请严格按照下面的 JSON 结构输出（不要添加注释、不要输出 JSON 以外的任何文字）：
@@ -116,6 +123,9 @@ relation_type 取值：
       "object_actors": ["用户"],
       "triggers": ["整理"],
       "assertion": "actual",
+      "world_kind": "real",
+      "temporal_kind": "past",
+      "planned_window": {},
       "action": "如意72 帮用户整理了桌面上的文件和项目目录",
       "result": "用户对整理结果很满意",
       "metadata": {"skill": "file-organizer"}
@@ -454,6 +464,9 @@ def extract_and_store_from_text(
             metadata = {}
         ev_sid = str(item.get("source_session_id") or "").strip() or sid
         assertion = _normalize_assertion(item.get("assertion"))
+        world_kind = normalize_event_world_kind(item.get("world_kind"))
+        temporal_kind = normalize_event_temporal_kind(item.get("temporal_kind"))
+        planned_window = normalize_planned_window_dict(item.get("planned_window"))
         event_objs.append(
             Event(
                 id=new_event_id(),
@@ -469,6 +482,9 @@ def extract_and_store_from_text(
                 object_actors=obj,
                 triggers=trig,
                 assertion=assertion,
+                world_kind=world_kind,
+                temporal_kind=temporal_kind,
+                planned_window=planned_window,
             )
         )
 

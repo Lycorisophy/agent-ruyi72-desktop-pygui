@@ -31,6 +31,7 @@ from src.llm.prompts import (
     build_system_block,
 )
 from src.skills.loader import build_safe_skills_prompt, get_registry
+from src.service.dialogue_phase import DialoguePhase
 from src.storage.session_store import AvatarMode, Mode, SessionMeta, SessionStore
 
 
@@ -42,6 +43,12 @@ def resolve_sessions_root(cfg: RuyiConfig) -> Path:
 
 
 class ConversationService:
+    """磁盘上的「进行中」相位在进程崩溃后视为陈旧，见 `_reconcile_dialogue_state_after_load`。"""
+
+    _DIALOGUE_STALE_PHASES: frozenset[str] = frozenset(
+        {"streaming", "react_running", "team_running", "followup_pending"}
+    )
+
     def __init__(self, cfg: RuyiConfig, store: SessionStore, *, react_default_steps: int) -> None:
         self._cfg = cfg
         self._llm = cfg.llm
@@ -59,6 +66,187 @@ class ConversationService:
         self._react_thread: threading.Thread | None = None
         self._llm_busy_depth = 0
         self._llm_busy_lock = threading.Lock()
+        self._dialogue_phase: DialoguePhase = "idle"
+        self._dialogue_last_turn_id: int = 0
+        self._dialogue_last_error: str | None = None
+        self._dialogue_state_extension: dict[str, Any] = {}
+        self._dialogue_lock = threading.Lock()
+
+    def set_dialogue_phase(
+        self,
+        phase: DialoguePhase,
+        *,
+        last_turn_id: int | None = None,
+        emit_event: bool = True,
+    ) -> None:
+        """更新当前会话的对话相位；可选向前端推送 state.changed；并写入 dialogue_state.json（P1）。"""
+        with self._dialogue_lock:
+            self._dialogue_phase = phase
+            if last_turn_id is not None:
+                self._dialogue_last_turn_id = int(last_turn_id)
+            if phase != "idle":
+                self._dialogue_last_error = None
+            else:
+                self._dialogue_state_extension.pop("team", None)
+                self._dialogue_state_extension.pop("react", None)
+            snap = {
+                "phase": self._dialogue_phase,
+                "last_turn_id": self._dialogue_last_turn_id,
+                "state_extension": dict(self._dialogue_state_extension),
+            }
+        if emit_event and self._persona_emit:
+            evt = {"type": "state.changed", **snap}
+            try:
+                self._persona_emit(evt)
+            except Exception:
+                pass
+        self._persist_dialogue_state()
+
+    def merge_dialogue_state_extension(
+        self,
+        patch: dict[str, Any],
+        *,
+        emit_event: bool = False,
+    ) -> None:
+        """合并 P2 细粒度字段（如 team.current_slot、react.step_index）；默认不落 state.changed 以免 ReAct 流刷屏。"""
+        with self._dialogue_lock:
+            for k, v in patch.items():
+                if v is None:
+                    self._dialogue_state_extension.pop(k, None)
+                else:
+                    self._dialogue_state_extension[k] = v
+            snap = {
+                "phase": self._dialogue_phase,
+                "last_turn_id": self._dialogue_last_turn_id,
+                "state_extension": dict(self._dialogue_state_extension),
+            }
+        if emit_event and self._persona_emit:
+            try:
+                self._persona_emit({"type": "state.changed", **snap})
+            except Exception:
+                pass
+        self._persist_dialogue_state()
+
+    def _on_team_slot_progress(self, slot: int, n_total: int) -> None:
+        """团队链当前槽位（每槽调用一次，带 emit 便于前端刷新）。"""
+        self.merge_dialogue_state_extension(
+            {"team": {"current_slot": int(slot), "team_size": int(n_total)}},
+            emit_event=True,
+        )
+
+    def _on_react_step_index(self, idx: int) -> None:
+        """ReAct 与 react.progress 同步的步序（状态签名变化时递增）。"""
+        self.merge_dialogue_state_extension(
+            {"react": {"step_index": int(idx)}},
+            emit_event=False,
+        )
+
+    def _dialogue_state_payload(self) -> dict[str, Any]:
+        with self._dialogue_lock:
+            return {
+                "schema_version": 1,
+                "session_id": self._active_id or "",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "phase": self._dialogue_phase,
+                "last_turn_id": self._dialogue_last_turn_id,
+                "last_error": self._dialogue_last_error,
+                "state_extension": dict(self._dialogue_state_extension),
+            }
+
+    def _persist_dialogue_state(self) -> None:
+        sid = self._active_id
+        if not sid:
+            return
+        try:
+            self._store.save_dialogue_state(sid, self._dialogue_state_payload())
+        except Exception:
+            pass
+
+    def _reconcile_dialogue_state_after_load(self) -> None:
+        """打开会话时读取 dialogue_state.json；若上次为非 idle 则降级为 idle 并提示。"""
+        assert self._active_id is not None
+        sid = self._active_id
+        raw = self._store.load_dialogue_state(sid)
+        recovered = False
+        recovered_msg = ""
+        tid = 0
+
+        if not raw or raw.get("schema_version") != 1:
+            with self._dialogue_lock:
+                self._dialogue_phase = "idle"
+                self._dialogue_last_turn_id = 0
+                self._dialogue_last_error = None
+                self._dialogue_state_extension = {}
+            self._persist_dialogue_state()
+            return
+
+        p = str(raw.get("phase") or "idle")
+        tid = int(raw.get("last_turn_id") or 0)
+        le_raw = raw.get("last_error")
+        le = le_raw.strip() if isinstance(le_raw, str) else None
+
+        if p in self._DIALOGUE_STALE_PHASES:
+            recovered = True
+            recovered_msg = (
+                "上次会话可能未正常结束（程序关闭或崩溃时已处于生成中），状态已重置为空闲。"
+            )
+            with self._dialogue_lock:
+                self._dialogue_phase = "idle"
+                self._dialogue_last_turn_id = tid
+                self._dialogue_last_error = recovered_msg
+                self._dialogue_state_extension = {}
+            self._persist_dialogue_state()
+        else:
+            valid = {
+                "idle",
+                "streaming",
+                "react_running",
+                "team_running",
+                "followup_pending",
+            }
+            np: DialoguePhase = p if p in valid else "idle"  # type: ignore[assignment]
+            ext_raw = raw.get("state_extension")
+            ext_merged: dict[str, Any] = (
+                dict(ext_raw) if isinstance(ext_raw, dict) else {}
+            )
+            with self._dialogue_lock:
+                self._dialogue_phase = np
+                self._dialogue_last_turn_id = tid
+                self._dialogue_last_error = le if le else None
+                self._dialogue_state_extension = ext_merged
+            self._persist_dialogue_state()
+
+        if recovered and self._persona_emit:
+            try:
+                self._persona_emit(
+                    {
+                        "type": "state.changed",
+                        "phase": "idle",
+                        "last_turn_id": tid,
+                        "recovered": True,
+                        "message": recovered_msg,
+                        "state_extension": {},
+                    }
+                )
+            except Exception:
+                pass
+
+    def get_dialogue_phase_snapshot(self) -> dict[str, Any]:
+        """供调试或 Api；与 llm_busy 独立。"""
+        with self._dialogue_lock:
+            phase = self._dialogue_phase
+            tid = self._dialogue_last_turn_id
+            err = self._dialogue_last_error
+            ext = dict(self._dialogue_state_extension)
+        with self._llm_busy_lock:
+            busy = self._llm_busy_depth
+        return {
+            "phase": phase,
+            "last_turn_id": tid,
+            "llm_busy_depth": busy,
+            "last_error": err,
+            "state_extension": ext,
+        }
 
     @contextmanager
     def llm_busy(self):
@@ -422,6 +610,7 @@ class ConversationService:
         self._memory_bootstrap_pending = True
         self._sync_persona_runtime()
         self._sync_chat_stream_runtime()
+        self._reconcile_dialogue_state_after_load()
         return {"meta": self._meta.model_dump(), "messages": list(self._messages)}
 
     def get_active(self) -> dict:
@@ -766,21 +955,26 @@ class ConversationService:
                     return "团队会话元数据无效。"
                 if ts > m_count:
                     return f"team.models 仅 {m_count} 条，无法继续团队编排。"
+                self.set_dialogue_phase("team_running")
                 try:
-                    with self.llm_busy():
-                        reply = run_team_turn(
-                            self._cfg,
-                            team_size=ts,
-                            prior_messages=list(self._messages[:-1]),
-                            user_text=user_text,
-                            memory_extra=memory_extra or None,
-                        )
-                except ValueError as e:
-                    self._messages.append({"role": "assistant", "content": str(e)})
-                except OllamaClientError as e:
-                    self._messages.append({"role": "assistant", "content": str(e)})
-                else:
-                    self._messages.append({"role": "assistant", "content": reply})
+                    try:
+                        with self.llm_busy():
+                            reply = run_team_turn(
+                                self._cfg,
+                                team_size=ts,
+                                prior_messages=list(self._messages[:-1]),
+                                user_text=user_text,
+                                memory_extra=memory_extra or None,
+                                slot_progress=self._on_team_slot_progress,
+                            )
+                    except ValueError as e:
+                        self._messages.append({"role": "assistant", "content": str(e)})
+                    except OllamaClientError as e:
+                        self._messages.append({"role": "assistant", "content": str(e)})
+                    else:
+                        self._messages.append({"role": "assistant", "content": reply})
+                finally:
+                    self.set_dialogue_phase("idle")
             elif self._meta.mode == "react":
                 ws = (self._meta.workspace or "").strip()
                 if not ws:
@@ -791,21 +985,30 @@ class ConversationService:
                 sched_ctx = (
                     (self, self._active_id) if self._active_id else None
                 )
-                with self.llm_busy():
-                    ok, _out = run_react(
-                        self._llm,
-                        self._messages,
-                        workspace=str(root),
-                        max_steps=self._meta.react_max_steps,
-                        memory_bootstrap=memory_extra or None,
-                        extra_system=self._kb_system_extra(),
-                        scheduler_context=sched_ctx,
-                        stream_emit=self._react_stream_emit,
-                    )
-                if ok:
-                    self._parse_action_card_on_last_assistant(self._messages)
+                self.set_dialogue_phase("react_running")
+                try:
+                    with self.llm_busy():
+                        ok, _out = run_react(
+                            self._llm,
+                            self._messages,
+                            workspace=str(root),
+                            max_steps=self._meta.react_max_steps,
+                            memory_bootstrap=memory_extra or None,
+                            extra_system=self._kb_system_extra(),
+                            scheduler_context=sched_ctx,
+                            stream_emit=self._react_stream_emit,
+                            step_progress=self._on_react_step_index,
+                        )
+                    if ok:
+                        self._parse_action_card_on_last_assistant(self._messages)
+                finally:
+                    self.set_dialogue_phase("idle")
             else:
-                err = self._chat_style_followup_after_card(memory_extra)
+                self.set_dialogue_phase("followup_pending")
+                try:
+                    err = self._chat_style_followup_after_card(memory_extra)
+                finally:
+                    self.set_dialogue_phase("idle")
                 if err:
                     return err
 
@@ -1026,42 +1229,47 @@ class ConversationService:
                     "async": False,
                 }
             self._messages.append({"role": "user", "content": text})
+            self.set_dialogue_phase("team_running")
             try:
-                with self.llm_busy():
-                    reply = run_team_turn(
-                        self._cfg,
-                        team_size=ts,
-                        prior_messages=list(self._messages[:-1]),
-                        user_text=text,
-                        memory_extra=memory_extra or None,
-                    )
-            except ValueError as e:
-                self._messages.pop()
+                try:
+                    with self.llm_busy():
+                        reply = run_team_turn(
+                            self._cfg,
+                            team_size=ts,
+                            prior_messages=list(self._messages[:-1]),
+                            user_text=text,
+                            memory_extra=memory_extra or None,
+                            slot_progress=self._on_team_slot_progress,
+                        )
+                except ValueError as e:
+                    self._messages.pop()
+                    return {
+                        "ok": False,
+                        "message": str(e),
+                        "append_error": True,
+                        "sync": True,
+                        "async": False,
+                    }
+                except OllamaClientError as e:
+                    self._messages.pop()
+                    return {
+                        "ok": False,
+                        "message": str(e),
+                        "append_error": True,
+                        "sync": True,
+                        "async": False,
+                    }
+                self._messages.append({"role": "assistant", "content": reply})
+                self._store.save_messages(self._active_id, self._messages)
+                self._meta, _ = self._store.load(self._active_id)
                 return {
-                    "ok": False,
-                    "message": str(e),
-                    "append_error": True,
-                    "sync": True,
+                    "ok": True,
+                    "message": reply,
+                    "append_error": False,
                     "async": False,
                 }
-            except OllamaClientError as e:
-                self._messages.pop()
-                return {
-                    "ok": False,
-                    "message": str(e),
-                    "append_error": True,
-                    "sync": True,
-                    "async": False,
-                }
-            self._messages.append({"role": "assistant", "content": reply})
-            self._store.save_messages(self._active_id, self._messages)
-            self._meta, _ = self._store.load(self._active_id)
-            return {
-                "ok": True,
-                "message": reply,
-                "append_error": False,
-                "async": False,
-            }
+            finally:
+                self.set_dialogue_phase("idle")
 
         if self._meta.mode == "chat":
             self._ensure_chat_stream().start()
@@ -1088,24 +1296,29 @@ class ConversationService:
 
         def _react_worker() -> None:
             try:
-                with self.llm_busy():
-                    ok, _out = run_react(
-                        llm_cfg,
-                        self._messages,
-                        workspace=root_s,
-                        max_steps=r_steps,
-                        memory_bootstrap=mem_b,
-                        extra_system=kb_ex,
-                        scheduler_context=sched_ctx,
-                        stream_emit=r_emit,
-                        cancel_check=lambda: self._react_cancel.is_set(),
-                    )
-                if ok:
-                    self._parse_action_card_on_last_assistant(self._messages)
-                self._store.save_messages(self._active_id, self._messages)
-                self._meta, _ = self._store.load(self._active_id)
-            except Exception:
-                pass
+                self.set_dialogue_phase("react_running")
+                try:
+                    with self.llm_busy():
+                        ok, _out = run_react(
+                            llm_cfg,
+                            self._messages,
+                            workspace=root_s,
+                            max_steps=r_steps,
+                            memory_bootstrap=mem_b,
+                            extra_system=kb_ex,
+                            scheduler_context=sched_ctx,
+                            stream_emit=r_emit,
+                            cancel_check=lambda: self._react_cancel.is_set(),
+                            step_progress=self._on_react_step_index,
+                        )
+                    if ok:
+                        self._parse_action_card_on_last_assistant(self._messages)
+                    self._store.save_messages(self._active_id, self._messages)
+                    self._meta, _ = self._store.load(self._active_id)
+                except Exception:
+                    pass
+                finally:
+                    self.set_dialogue_phase("idle")
             finally:
                 if self._persona_emit:
                     self._persona_emit({"type": "turn.finished", "turn_id": -1})

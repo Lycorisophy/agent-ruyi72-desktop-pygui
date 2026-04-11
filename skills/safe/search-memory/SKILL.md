@@ -1,6 +1,6 @@
 ---
 name: search-memory
-description: 按关键词检索事实/事件/关系；已启用 SQLite 且 memory.db 中有数据时走 FTS5，否则回退为 JSONL 子串匹配。
+description: 按关键词检索事实/事件/关系；已启用 SQLite 且 memory.db 中有数据时走 FTS5，否则回退为 JSONL 子串匹配。search_memory 可对事件按 world_kind / temporal_kind 可选过滤。
 ---
 
 # search-memory（检索记忆）
@@ -17,6 +17,8 @@ description: 按关键词检索事实/事件/关系；已启用 SQLite 且 memor
 - 直接调用工具 **`search_memory`**：
   - `query`：检索关键词或短语（必填）。
   - `max_per_kind`：每类最多返回条数（可选，默认 15）。
+  - `event_world_kinds`：可选，逗号分隔，仅过滤**事件**。取值：`real`、`fictional`、`hypothetical`、`unknown`；留空表示不按世界层过滤。
+  - `event_temporal_kinds`：可选，逗号分隔，仅过滤**事件**。取值：`past`、`present`、`future_planned`、`future_uncertain`、`atemporal`；留空表示不按时间层过滤。
 
 ## 局限与补充工具
 

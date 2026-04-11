@@ -152,6 +152,35 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+    _migrate_memory_events_v3_columns(conn)
+
+
+def _migrate_memory_events_v3_columns(conn: sqlite3.Connection) -> None:
+    """为 memory_events 追加 v3.0 列（world_kind / temporal_kind / planned_window_json），幂等。"""
+    try:
+        cur = conn.execute("PRAGMA table_info(memory_events)")
+        cols = {row[1] for row in cur.fetchall()}
+    except sqlite3.OperationalError:
+        return
+    alters: list[str] = []
+    if "world_kind" not in cols:
+        alters.append(
+            "ALTER TABLE memory_events ADD COLUMN world_kind TEXT DEFAULT 'real'"
+        )
+    if "temporal_kind" not in cols:
+        alters.append(
+            "ALTER TABLE memory_events ADD COLUMN temporal_kind TEXT DEFAULT 'past'"
+        )
+    if "planned_window_json" not in cols:
+        alters.append(
+            "ALTER TABLE memory_events ADD COLUMN planned_window_json TEXT DEFAULT '{}'"
+        )
+    for sql in alters:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+    conn.commit()
 
 
 def upsert_fact_embedding(
@@ -266,12 +295,17 @@ def insert_event_row(conn: sqlite3.Connection, e: Event) -> None:
 
     if not isinstance(e, EventCls):
         return
+    pw_json = json.dumps(
+        e.planned_window if isinstance(e.planned_window, dict) else {},
+        ensure_ascii=False,
+    )
     conn.execute(
         """
         INSERT OR REPLACE INTO memory_events
           (id, created_at, time, location, actors_json, action, result, metadata_json,
-           source_session_id, subject_json, object_json, triggers_json, assertion)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           source_session_id, subject_json, object_json, triggers_json, assertion,
+           world_kind, temporal_kind, planned_window_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             e.id,
@@ -287,9 +321,18 @@ def insert_event_row(conn: sqlite3.Connection, e: Event) -> None:
             json.dumps(e.object_actors, ensure_ascii=False),
             json.dumps(e.triggers, ensure_ascii=False),
             e.assertion,
+            e.world_kind,
+            e.temporal_kind,
+            pw_json,
         ),
     )
     conn.execute("DELETE FROM memory_events_fts WHERE event_id=?", (e.id,))
+    pw_text = ""
+    if isinstance(e.planned_window, dict) and e.planned_window:
+        try:
+            pw_text = json.dumps(e.planned_window, ensure_ascii=False)
+        except (TypeError, ValueError):
+            pw_text = ""
     body = " ".join(
         [
             e.action,
@@ -298,6 +341,9 @@ def insert_event_row(conn: sqlite3.Connection, e: Event) -> None:
             " ".join(e.subject_actors),
             " ".join(e.object_actors),
             " ".join(e.actors),
+            e.world_kind,
+            e.temporal_kind,
+            pw_text,
         ]
     )
     conn.execute(
@@ -389,7 +435,12 @@ def _dict_to_fact(d: dict) -> Fact | None:
 
 
 def _dict_to_event(d: dict) -> Event | None:
-    from src.storage.memory_store import Event
+    from src.storage.memory_store import (
+        Event,
+        normalize_event_temporal_kind,
+        normalize_event_world_kind,
+        normalize_planned_window_dict,
+    )
 
     try:
         action = str(d.get("action") or "").strip()
@@ -411,6 +462,9 @@ def _dict_to_event(d: dict) -> Event | None:
         tr = d.get("triggers") or []
         if not isinstance(tr, list):
             tr = []
+        wk = normalize_event_world_kind(d.get("world_kind"))
+        tk = normalize_event_temporal_kind(d.get("temporal_kind"))
+        pw = normalize_planned_window_dict(d.get("planned_window"))
         return Event(
             id=str(d.get("id") or ""),
             created_at=str(d.get("created_at") or ""),
@@ -425,6 +479,9 @@ def _dict_to_event(d: dict) -> Event | None:
             object_actors=[str(a) for a in obj],
             triggers=[str(a) for a in tr],
             assertion=str(d.get("assertion") or "actual") or "actual",
+            world_kind=wk,
+            temporal_kind=tk,
+            planned_window=pw,
         )
     except (TypeError, ValueError):
         return None
@@ -544,6 +601,12 @@ def _row_to_fact_dict(row: sqlite3.Row) -> dict:
 
 
 def _row_to_event_dict(row: sqlite3.Row) -> dict:
+    from src.storage.memory_store import (
+        normalize_event_temporal_kind,
+        normalize_event_world_kind,
+        normalize_planned_window_dict,
+    )
+
     d = dict(row)
     for k, jk in (
         ("actors_json", "actors"),
@@ -557,6 +620,17 @@ def _row_to_event_dict(row: sqlite3.Row) -> dict:
             d[jk] = json.loads(raw or ("{}" if k == "metadata_json" else "[]"))
         except json.JSONDecodeError:
             d[jk] = {} if jk == "metadata" else []
+    pw_raw = d.pop("planned_window_json", None)
+    if pw_raw is not None and str(pw_raw).strip():
+        try:
+            parsed = json.loads(pw_raw) if isinstance(pw_raw, str) else pw_raw
+            d["planned_window"] = normalize_planned_window_dict(parsed)
+        except json.JSONDecodeError:
+            d["planned_window"] = {}
+    else:
+        d["planned_window"] = {}
+    d["world_kind"] = normalize_event_world_kind(d.get("world_kind"))
+    d["temporal_kind"] = normalize_event_temporal_kind(d.get("temporal_kind"))
     return d
 
 
@@ -582,6 +656,29 @@ def sqlite_read_recent_events(conn: sqlite3.Connection, limit: int) -> list[dict
     return [_row_to_event_dict(row) for row in cur.fetchall()]
 
 
+def sqlite_read_recent_events_for_bootstrap(
+    conn: sqlite3.Connection,
+    limit: int,
+    *,
+    exclude_world_kinds: frozenset[str],
+) -> list[dict]:
+    """冷启动用：按时间倒序取事件，排除给定 world_kind（与 COALESCE(world_kind,'real') 比较）。"""
+    if not exclude_world_kinds:
+        return sqlite_read_recent_events(conn, limit)
+    conn.row_factory = sqlite3.Row
+    lim = max(1, limit)
+    qs = ",".join("?" * len(exclude_world_kinds))
+    sql = f"""
+        SELECT * FROM memory_events
+        WHERE COALESCE(world_kind, 'real') NOT IN ({qs})
+        ORDER BY created_at DESC
+        LIMIT ?
+    """
+    params = tuple(exclude_world_kinds) + (lim,)
+    cur = conn.execute(sql, params)
+    return [_row_to_event_dict(row) for row in cur.fetchall()]
+
+
 def sqlite_read_recent_relations(conn: sqlite3.Connection, limit: int) -> list[dict]:
     conn.row_factory = sqlite3.Row
     cur = conn.execute(
@@ -596,14 +693,28 @@ def fts_search_combined(
     query: str,
     *,
     max_per_kind: int,
+    event_world_kinds: list[str] | None = None,
+    event_temporal_kinds: list[str] | None = None,
 ) -> list[tuple[str, str]]:
-    """返回 (标签, json行) 列表。"""
+    """返回 (标签, json行) 列表。
+
+    event_world_kinds / event_temporal_kinds：
+    - 均为 None 时不对事件做类型过滤（与旧行为一致）；
+    - 任一为长度 0 的列表时，不返回任何事件命中（调用方应在传入前跳过事件检索）；
+    - 否则仅保留 world_kind / temporal_kind 落在给定集合内的事件（与 NULL 列比较时用 COALESCE 与默认一致）。
+    """
     expr = _fts_match_expr(query)
     if not expr:
         return []
     conn.row_factory = sqlite3.Row
     out: list[tuple[str, str]] = []
     lim = max(1, max_per_kind)
+
+    skip_events = False
+    if event_world_kinds is not None and len(event_world_kinds) == 0:
+        skip_events = True
+    if event_temporal_kinds is not None and len(event_temporal_kinds) == 0:
+        skip_events = True
 
     def add_fts(
         fts_sql: str, table: str, label: str, map_row: object
@@ -625,18 +736,57 @@ def fts_search_combined(
                 d = map_row(row)
                 out.append((label, json.dumps(d, ensure_ascii=False)))
 
+    def add_events_fts() -> None:
+        if skip_events:
+            return
+        use_join = event_world_kinds is not None or event_temporal_kinds is not None
+        try:
+            if not use_join:
+                cur = conn.execute(
+                    "SELECT event_id FROM memory_events_fts WHERE memory_events_fts MATCH ? LIMIT ?",
+                    (expr, lim),
+                )
+            else:
+                wheres = ["f MATCH ?"]
+                params: list[object] = [expr]
+                if event_world_kinds is not None:
+                    qs = ",".join("?" * len(event_world_kinds))
+                    wheres.append(f"COALESCE(e.world_kind, 'real') IN ({qs})")
+                    params.extend(event_world_kinds)
+                if event_temporal_kinds is not None:
+                    qs = ",".join("?" * len(event_temporal_kinds))
+                    wheres.append(f"COALESCE(e.temporal_kind, 'past') IN ({qs})")
+                    params.extend(event_temporal_kinds)
+                params.append(lim)
+                sql = f"""
+                    SELECT f.event_id FROM memory_events_fts AS f
+                    INNER JOIN memory_events AS e ON e.id = f.event_id
+                    WHERE {' AND '.join(wheres)}
+                    LIMIT ?
+                """
+                cur = conn.execute(sql, tuple(params))
+        except sqlite3.OperationalError:
+            return
+        for r in cur.fetchall():
+            rid = r[0]
+            if not rid:
+                continue
+            try:
+                cur2 = conn.execute("SELECT * FROM memory_events WHERE id=?", (rid,))
+                row = cur2.fetchone()
+            except sqlite3.OperationalError:
+                continue
+            if row:
+                d = _row_to_event_dict(row)
+                out.append(("【事件】FTS", json.dumps(d, ensure_ascii=False)))
+
     add_fts(
         "SELECT fact_id FROM memory_facts_fts WHERE memory_facts_fts MATCH ? LIMIT ?",
         "memory_facts",
         "【事实】FTS",
         _row_to_fact_dict,
     )
-    add_fts(
-        "SELECT event_id FROM memory_events_fts WHERE memory_events_fts MATCH ? LIMIT ?",
-        "memory_events",
-        "【事件】FTS",
-        _row_to_event_dict,
-    )
+    add_events_fts()
     add_fts(
         "SELECT rel_id FROM memory_relations_fts WHERE memory_relations_fts MATCH ? LIMIT ?",
         "memory_relations",

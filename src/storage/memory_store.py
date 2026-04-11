@@ -32,6 +32,28 @@ def relation_type_label(code: int) -> str:
     return RELATION_TYPE_LABELS.get(code, str(code))
 
 
+def normalize_event_world_kind(raw: object) -> str:
+    """v3.0 世界层；非法或缺省为 real。"""
+    s = str(raw or "").strip().lower()
+    if s in ("real", "fictional", "hypothetical", "unknown"):
+        return s
+    return "real"
+
+
+def normalize_event_temporal_kind(raw: object) -> str:
+    """v3.0 时间层；非法或缺省为 past（与旧叙事兼容）。"""
+    s = str(raw or "").strip().lower()
+    if s in ("past", "present", "future_planned", "future_uncertain", "atemporal"):
+        return s
+    return "past"
+
+
+def normalize_planned_window_dict(raw: object) -> dict:
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {}
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -66,6 +88,9 @@ class Event:
     object_actors: list[str] = field(default_factory=list)
     triggers: list[str] = field(default_factory=list)
     assertion: str = "actual"
+    world_kind: str = "real"
+    temporal_kind: str = "past"
+    planned_window: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -233,6 +258,44 @@ class MemoryStore:
                 continue
             if isinstance(obj, dict):
                 out.append(obj)
+        return out
+
+    def read_recent_events_for_bootstrap(
+        self,
+        limit: int,
+        *,
+        exclude_world_kinds: frozenset[str],
+    ) -> list[dict]:
+        """冷启动：从 events.jsonl 尾部扫描，跳过指定 world_kind，凑满 limit 条（较新优先）。"""
+        if not exclude_world_kinds:
+            return self.read_recent("events", limit)
+        path = self._path_for("events")
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        lim = max(1, int(limit))
+        tail_n = min(len(lines), max(lim * 15, 50), 500)
+        segment = lines[-tail_n:]
+        out: list[dict] = []
+        for line in reversed(segment):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            wk = normalize_event_world_kind(obj.get("world_kind"))
+            if wk in exclude_world_kinds:
+                continue
+            out.append(obj)
+            if len(out) >= lim:
+                break
         return out
 
 

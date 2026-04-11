@@ -155,6 +155,8 @@ class MemoryConfig(BaseModel):
     extract_max_input_chars: int = Field(default=16000, ge=2000, le=500000)
     # 抽取专用生成上限（与主对话 llm.max_tokens 独立，仅影响记忆抽取请求）
     extract_max_tokens: int = Field(default=4096, ge=256, le=131072)
+    # 会话冷启动（build_memory_bootstrap_block）：为 True 时事件中排除 world_kind=fictional（v3.0）
+    bootstrap_exclude_fictional_events: bool = True
 
 
 class MemoryAutoExtractConfig(BaseModel):

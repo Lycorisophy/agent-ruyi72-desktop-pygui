@@ -1,6 +1,7 @@
 # AI 智能体 ruyi72 记忆系统（永驻 + 事件）设计（v3.0 · 三期）
 
-> **文档性质**：在 [v2.0](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md) 已定义的分级、SQLite/FTS、向量、永驻队列等基础上的**演进设计**；**非**当前代码实现说明。  
+> **文档性质**：在 [v2.0](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md) 已定义的分级、SQLite/FTS、向量、永驻队列等基础上的**演进设计**；全文除 **§十「与本仓库」** 外仍以目标与行为约定为主。  
+> **本仓库已落地（事件 v3 字段）**：数据模型、JSONL、SQLite（`planned_window` 列存为 `planned_window_json`）、抽取 JSON 契约与 `format_memory_entries` 已贯通 `world_kind`（默认 `real`）、`temporal_kind`（默认 `past`）、`planned_window`（默认 `{}`）。**`search_memory`** 已支持可选 **`event_world_kinds` / `event_temporal_kinds`**（逗号分隔枚举，仅作用于事件命中；FTS 路径为 JOIN 过滤，JSONL 路径为后过滤）。**冷启动**（`build_memory_bootstrap_block`）默认 **`memory.bootstrap_exclude_fictional_events: true`**，事件中排除 `world_kind=fictional`（SQLite：`WHERE … NOT IN ('fictional')`；JSONL：尾部扫描凑条数）。**仍为后续目标**：计划类事件在冷启动中单独折叠摘要、**事件向量**对 `fictional` 分流（当前仓库无事件向量索引，见 §五）。  
 > **排期声明**：阶段与验收为产品/技术对齐用，**不构成交付承诺**。
 
 ## 一、三期相对二期的增量
@@ -100,9 +101,9 @@
 
 ## 五、存储与索引（目标）
 
-- **`memory_events` 表**：新增列 `world_kind`、`temporal_kind`（TEXT + CHECK 或应用层校验）；`planned_window` 可 JSON 列。  
-- **FTS**：仍可索引 `action`/`result`；**过滤**在 SQL 层：`WHERE world_kind='real' AND temporal_kind IN ('past','present')` 等。  
-- **向量**：重要事实不变；事件向量若存在，建议 **默认不向量化 `fictional`** 或单独命名空间，避免污染「用户生活」语义检索。
+- **`memory_events` 表（本仓库）**：已增加列 `world_kind`、`temporal_kind`（TEXT，应用层归一化）；`planned_window` 以 **`planned_window_json`** 存 `json.dumps` 文本，读路径映射为 `planned_window` 字典。  
+- **FTS + 事件过滤**：索引 `body` 已包含 `world_kind` / `temporal_kind` 等；关键词检索 **`search_memory`** 在 SQLite 路径下对 `memory_events` **JOIN** 后按 `world_kind` / `temporal_kind` 子集过滤（见实现）。  
+- **向量**：重要事实不变；**事件向量尚未在本仓库实现**；若未来引入，建议 **默认不向量化 `fictional`** 或单独命名空间，避免污染「用户生活」语义检索。
 
 ---
 
@@ -110,8 +111,8 @@
 
 | 场景 | 建议默认行为 |
 |------|----------------|
-| 会话冷启动记忆块 | 以 **`world_kind=real`** 为主；**排除** `fictional`；**计划**可按配置折叠为一行「近期计划摘要」 |
-| `browse_memory` / `search_memory` | 增加可选参数或配置项：`include_fictional`、`include_planned_only` 等 |
+| 会话冷启动记忆块 | **已实现**：默认排除 **`fictional`**（配置 **`memory.bootstrap_exclude_fictional_events`**）；仍以 `real` 等为主；**计划**折叠为一行「近期计划摘要」仍为后续 |
+| `browse_memory` / `search_memory` | `search_memory` 已实现可选 **`event_world_kinds` / `event_temporal_kinds`**（仅事件）；`browse_memory` 仍可按产品需要再加分页或类型折叠；`include_fictional` 类全局默认仍为配置目标 |
 | ReAct | 用户问「我下周要做什么」→ 显式查 **`temporal_kind=future_planned`**；问「小说剧情」→ 允许 `fictional` |
 
 ---
@@ -150,7 +151,7 @@
 ## 十、与 v2.0 / 实现的链接
 
 - **二期目标与契约**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md) §4.1.1（`assertion`）、§6 抽取 JSON。  
-- **当前代码**：`Event` 模型与 `memory_extractor` 以仓库内实现为准；落地三期时需同步 [memory_extractor.py](../src/agent/memory_extractor.py)、[memory_store.py](../src/storage/memory_store.py)、[memory_sqlite.py](../src/storage/memory_sqlite.py) 与工具层。
+- **当前代码（v3 事件字段已贯通）**：[memory_store.py](../src/storage/memory_store.py)（`Event` + 归一化、JSONL 冷启动事件扫描）、[memory_sqlite.py](../src/storage/memory_sqlite.py)（列迁移、FTS、`JOIN` 事件过滤、冷启动事件 SQL）、[memory_extractor.py](../src/agent/memory_extractor.py)（抽取提示词与写入）、[memory_tools.py](../src/agent/memory_tools.py)（浏览、格式化、`search_memory` 类型过滤、`load_bootstrap_memory_split`）、[config.py](../src/config.py)（`bootstrap_exclude_fictional_events`）。**仍待后续迭代**：冷启动中计划事件折叠、事件向量与 `fictional` 分流（§五～§六）。
 
 ---
 

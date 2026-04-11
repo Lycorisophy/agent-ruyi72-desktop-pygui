@@ -134,6 +134,7 @@ class SafeChatStreamRuntime:
         if not text:
             return
         self._streaming = True
+        started_stream = False
         try:
             if not self._svc.persona_prepare_turn(text):
                 self._emit_safe(
@@ -141,6 +142,8 @@ class SafeChatStreamRuntime:
                 )
                 return
             self._emit_safe({"type": "turn.started", "turn_id": tid, "user_text": text})
+            self._svc.set_dialogue_phase("streaming", last_turn_id=tid)
+            started_stream = True
 
             call_messages = self._svc.build_safe_chat_call_messages(
                 text, memory_extra=memory_extra
@@ -203,4 +206,6 @@ class SafeChatStreamRuntime:
                 )
         finally:
             self._streaming = False
+            if started_stream:
+                self._svc.set_dialogue_phase("idle")
             self._emit_safe({"type": "turn.finished", "turn_id": tid})

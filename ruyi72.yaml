@@ -16,7 +16,17 @@ llm:
   max_tokens: 131072
   api_mode: openai
   api_key: "ollama-local-no-key-needed"
-
+embedding:
+  model: qwen3-embedding:8b
+  base_url: ""   # 空则沿用 llm.base_url（Ollama）
+memory:
+  backend: dual   # jsonl | dual | sqlite；dual/sqlite 时启动会尝试从 *.jsonl 一次性导入 memory.db
+  sqlite_path: "" # 空则为 %USERPROFILE%\.ruyi72\memory\memory.db
+  vector_enabled: true   # true 且 llm.provider=ollama 时，important 事实写入后异步量化为向量
+  messages_index_enabled: true  # true 时每次保存会话消息会重建该会话在 memory.db 的 FTS（供 search_history）
+  extract_llm_timeout_sec: 600  # 主动/闲时记忆抽取的 LLM 读超时（秒，60～3600）；大模型或长粘贴可调高如 600
+  extract_max_input_chars: 16000  # 单次抽取粘贴文本最大字符数；超出则拒绝（可分段提取或调大）
+  extract_max_tokens: 40960      # 抽取专用生成 token 上限，与 llm.max_tokens 独立，减轻慢推理与超长 JSON
 # 团队模式（可选）：按顺序对应 A1、A2…；至少 2 条才可创建团队会话；N ≤ min(4, 模型条数)。
 # suitable_for 会作为系统提示词发给团队链路中的每一个模型，供委派决策参考。
 # team:

@@ -12,7 +12,53 @@ from src.storage.memory_store import (
     MemoryKind,
     MemoryStore,
     default_store,
+    normalize_event_temporal_kind,
+    normalize_event_world_kind,
+    normalize_planned_window_dict,
 )
+
+_VALID_EVENT_WORLD_KINDS = frozenset(
+    {"real", "fictional", "hypothetical", "unknown"}
+)
+_VALID_EVENT_TEMPORAL_KINDS = frozenset(
+    {"past", "present", "future_planned", "future_uncertain", "atemporal"}
+)
+
+
+def parse_event_world_kind_filter_arg(raw: str | None) -> list[str] | None:
+    """逗号分隔；空串表示不按世界层过滤。仅合法枚举会入选；若串非空但无合法项则返回 []。"""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    out = [p.strip().lower() for p in s.split(",")]
+    out = [k for k in out if k in _VALID_EVENT_WORLD_KINDS]
+    return out if out else []
+
+
+def parse_event_temporal_kind_filter_arg(raw: str | None) -> list[str] | None:
+    """逗号分隔；空串表示不按时间层过滤。仅合法枚举会入选；若串非空但无合法项则返回 []。"""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    out = [p.strip().lower() for p in s.split(",")]
+    out = [k for k in out if k in _VALID_EVENT_TEMPORAL_KINDS]
+    return out if out else []
+
+
+def _event_dict_matches_kind_filters(
+    d: dict,
+    world_filter: list[str] | None,
+    temporal_filter: list[str] | None,
+) -> bool:
+    if world_filter is None and temporal_filter is None:
+        return True
+    w = normalize_event_world_kind(d.get("world_kind"))
+    t = normalize_event_temporal_kind(d.get("temporal_kind"))
+    if world_filter is not None and w not in world_filter:
+        return False
+    if temporal_filter is not None and t not in temporal_filter:
+        return False
+    return True
 
 
 def load_recent_memory_split(
@@ -53,6 +99,58 @@ def load_recent_memory_split(
         store.read_recent("events", el),
         store.read_recent("relations", rl),
     )
+
+
+def load_bootstrap_memory_split(
+    store: MemoryStore,
+    facts_limit: int,
+    events_limit: int,
+    relations_limit: int,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """冷启动读路径：事实/关系与 load_recent_memory_split 相同；事件可按配置排除 fictional（v3.0）。"""
+    from src.config import load_config
+    from src.storage.memory_sqlite import (
+        connect_memory_db,
+        ensure_schema,
+        sqlite_read_recent_facts,
+        sqlite_read_recent_events,
+        sqlite_read_recent_events_for_bootstrap,
+        sqlite_read_recent_relations,
+        sqlite_row_count,
+    )
+
+    cfg = load_config()
+    fl = max(1, int(facts_limit))
+    el = max(1, int(events_limit))
+    rl = max(1, int(relations_limit))
+    ex_fic = cfg.memory.bootstrap_exclude_fictional_events
+    exclude_wk = frozenset({"fictional"}) if ex_fic else frozenset()
+
+    if cfg.memory.backend in ("dual", "sqlite"):
+        conn = connect_memory_db(store.root, cfg)
+        try:
+            ensure_schema(conn)
+            if sqlite_row_count(conn) > 0:
+                facts = sqlite_read_recent_facts(conn, fl)
+                if ex_fic:
+                    events = sqlite_read_recent_events_for_bootstrap(
+                        conn, el, exclude_world_kinds=exclude_wk
+                    )
+                else:
+                    events = sqlite_read_recent_events(conn, el)
+                relations = sqlite_read_recent_relations(conn, rl)
+                return (facts, events, relations)
+        finally:
+            conn.close()
+    facts = store.read_recent("facts", fl)
+    if ex_fic:
+        events = store.read_recent_events_for_bootstrap(
+            el, exclude_world_kinds=exclude_wk
+        )
+    else:
+        events = store.read_recent("events", el)
+    relations = store.read_recent("relations", rl)
+    return (facts, events, relations)
 
 
 def _format_relation_line(r: dict) -> str:
@@ -109,6 +207,9 @@ def format_memory_entries(
             sess = (e.get("source_session_id") or "").strip()
             action = e.get("action") or ""
             result = e.get("result") or ""
+            wk = normalize_event_world_kind(e.get("world_kind"))
+            tk = normalize_event_temporal_kind(e.get("temporal_kind"))
+            pw = normalize_planned_window_dict(e.get("planned_window"))
             extra_parts: list[str] = []
             if subj or obj:
                 extra_parts.append(f"主{subj or '-'}→客{obj or '-'}")
@@ -116,6 +217,20 @@ def format_memory_entries(
                 extra_parts.append(f"触发:{trig}")
             if assertion and assertion != "actual":
                 extra_parts.append(f"断言:{assertion}")
+            if wk != "real":
+                extra_parts.append(f"世界:{wk}")
+            if tk != "past":
+                extra_parts.append(f"时间层:{tk}")
+            if pw:
+                txt = pw.get("text") if isinstance(pw.get("text"), str) else ""
+                if txt:
+                    snippet = txt if len(txt) <= 48 else txt[:45] + "…"
+                    extra_parts.append(f"计划窗:{snippet}")
+                else:
+                    raw = json.dumps(pw, ensure_ascii=False)
+                    extra_parts.append(
+                        f"计划窗:{raw if len(raw) <= 64 else raw[:61] + '…'}"
+                    )
             if sess:
                 extra_parts.append(f"会话:{sess[:12]}…" if len(sess) > 12 else f"会话:{sess}")
             extra = f" [{' | '.join(extra_parts)}]" if extra_parts else ""
@@ -155,9 +270,10 @@ def build_memory_bootstrap_block(
     """
     会话冷启动：拼一段可注入 system 的「已知长期记忆」。
     若无任何条目则返回空串（调用方可不追加）。
+    事件默认排除 world_kind=fictional（见 memory.bootstrap_exclude_fictional_events）。
     """
     st = store or default_store()
-    facts, events, relations = load_recent_memory_split(
+    facts, events, relations = load_bootstrap_memory_split(
         st, facts_limit, events_limit, relations_limit
     )
     if not facts and not events and not relations:
@@ -198,9 +314,15 @@ def search_memory_keyword(
     query: str,
     *,
     max_per_kind: int = 15,
+    event_world_kinds: str = "",
+    event_temporal_kinds: str = "",
     store: MemoryStore | None = None,
 ) -> str:
-    """关键词检索：dual/sqlite 且库内有数据时用 FTS5，否则 JSONL 子串扫描。"""
+    """关键词检索：dual/sqlite 且库内有数据时用 FTS5，否则 JSONL 子串扫描。
+
+    event_world_kinds / event_temporal_kinds：可选，逗号分隔枚举；仅作用于**事件**命中。
+    留空表示该维度不过滤。示例：event_world_kinds=\"real\"、event_temporal_kinds=\"future_planned,present\"。
+    """
     from src.config import load_config
     from src.storage.memory_sqlite import (
         connect_memory_db,
@@ -213,6 +335,19 @@ def search_memory_keyword(
     if not q:
         return "请提供非空的检索关键词或短语。"
     q_lower = q.lower()
+    world_filter = parse_event_world_kind_filter_arg(event_world_kinds)
+    temporal_filter = parse_event_temporal_kind_filter_arg(event_temporal_kinds)
+    filter_notes: list[str] = []
+    if (event_world_kinds or "").strip():
+        filter_notes.append(f"world_kind ∈ {world_filter}")
+    if (event_temporal_kinds or "").strip():
+        filter_notes.append(f"temporal_kind ∈ {temporal_filter}")
+    filter_footer = (
+        "\n（已应用事件类型过滤：" + "；".join(filter_notes) + "）"
+        if filter_notes
+        else ""
+    )
+
     st = store or default_store()
     cfg = load_config()
     if cfg.memory.backend in ("dual", "sqlite"):
@@ -220,14 +355,20 @@ def search_memory_keyword(
         try:
             ensure_schema(conn)
             if sqlite_row_count(conn) > 0:
-                hits = fts_search_combined(conn, q, max_per_kind=max_per_kind)
+                hits = fts_search_combined(
+                    conn,
+                    q,
+                    max_per_kind=max_per_kind,
+                    event_world_kinds=world_filter,
+                    event_temporal_kinds=temporal_filter,
+                )
                 if hits:
                     parts: list[str] = []
                     for label, line in hits:
                         parts.append(label)
                         parts.append(line)
                     parts.append("")
-                    return "\n".join(parts).strip()
+                    return "\n".join(parts).strip() + filter_footer
         finally:
             conn.close()
     root = st.root
@@ -240,7 +381,24 @@ def search_memory_keyword(
     for kind in ("facts", "events", "relations"):
         path = root / f"{kind}.jsonl"
         matches = _lines_matching(path, q_lower)
-        take = matches[-max_per_kind:] if len(matches) > max_per_kind else matches
+        if kind == "events":
+            filtered_lines: list[str] = []
+            for line in matches:
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                if _event_dict_matches_kind_filters(obj, world_filter, temporal_filter):
+                    filtered_lines.append(line)
+            take = (
+                filtered_lines[-max_per_kind:]
+                if len(filtered_lines) > max_per_kind
+                else filtered_lines
+            )
+        else:
+            take = matches[-max_per_kind:] if len(matches) > max_per_kind else matches
         if not take:
             continue
         parts.append(labels[kind])
@@ -255,8 +413,8 @@ def search_memory_keyword(
                 parts.append(line)
         parts.append("")
     if not parts:
-        return f"未在记忆库中找到包含 {q!r} 的条目。"
-    return "\n".join(parts).strip()
+        return f"未在记忆库中找到包含 {q!r} 的条目。" + filter_footer
+    return "\n".join(parts).strip() + filter_footer
 
 
 def search_memory_semantic(

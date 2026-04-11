@@ -81,6 +81,7 @@ persona:
 #   extract_llm_timeout_sec: 300  # 主动/闲时记忆抽取的 LLM 读超时（秒，60～3600）；大模型或长粘贴可调高如 600
 #   extract_max_input_chars: 16000  # 单次抽取粘贴文本最大字符数；超出则拒绝（可分段提取或调大）
 #   extract_max_tokens: 4096      # 抽取专用生成 token 上限，与 llm.max_tokens 独立，减轻慢推理与超长 JSON
+#   bootstrap_exclude_fictional_events: true   # v3：会话冷启动注入（build_memory_bootstrap_block）是否从事件中排除 world_kind=fictional
 
 # 内置会话级 + 全局定时任务调度（计划见 docs/scheduled-tasks-design.md）
 # builtin_scheduler:

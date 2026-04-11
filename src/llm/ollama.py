@@ -221,7 +221,7 @@ class OllamaClient:
         read_sec = 120.0 if read_timeout_sec is None else float(read_timeout_sec)
         _LOG_HTTP.info(
             "http chat POST begin caller=%s model=%s read_timeout_sec=%.1f "
-            "connect_timeout_sec=10.0 url=%s",
+            "connect_timeout_sec=30.0 url=%s",
             caller,
             model_name,
             read_sec,
@@ -229,7 +229,7 @@ class OllamaClient:
         )
         try:
             with httpx.Client(
-                timeout=httpx.Timeout(read_sec, connect=10.0),
+                timeout=httpx.Timeout(read_sec, connect=30.0),
                 trust_env=trust,
             ) as client:
                 r = client.post(chat_url, json=body, headers=headers)

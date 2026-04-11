@@ -325,6 +325,29 @@ class SessionStore:
                             messages.append(norm)
         return meta, messages
 
+    def save_dialogue_state(self, session_id: str, data: dict[str, Any]) -> None:
+        """写入会话目录 `dialogue_state.json`（对话相位快照，与 meta 同级）。"""
+        d = self._resolved_session_dir(session_id)
+        (d / "dialogue_state.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def load_dialogue_state(self, session_id: str) -> dict[str, Any] | None:
+        """读取 `dialogue_state.json`；不存在或损坏时返回 None。"""
+        try:
+            d = self._resolved_session_dir(session_id)
+        except ValueError:
+            return None
+        p = d / "dialogue_state.json"
+        if not p.is_file():
+            return None
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
     def save_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         d = self._session_dir(session_id)
         if not d.is_dir():

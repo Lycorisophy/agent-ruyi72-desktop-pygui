@@ -214,6 +214,10 @@ class Api:
     def get_active_session(self) -> dict:
         return self._svc.get_active()
 
+    def get_dialogue_state(self) -> dict:
+        """当前活动会话的对话相位；含 phase、last_turn_id、llm_busy_depth、last_error（与 dialogue_state.json 同步）。"""
+        return {"ok": True, **self._svc.get_dialogue_phase_snapshot()}
+
     def update_session(self, payload: dict | None = None) -> dict:
         p = payload or {}
         return self._svc.update_session(

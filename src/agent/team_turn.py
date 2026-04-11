@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from src.config import RuyiConfig, TeamConfig
@@ -146,6 +147,7 @@ def run_team_turn(
     prior_messages: list[dict[str, str]],
     user_text: str,
     memory_extra: str | None = None,
+    slot_progress: Callable[[int, int], None] | None = None,
 ) -> str:
     """
     执行一轮用户消息的团队链式调用，返回最终给用户展示的文本。
@@ -166,6 +168,11 @@ def run_team_turn(
     handoff_notes: list[str] = []
 
     for slot in range(1, n + 1):
+        if slot_progress:
+            try:
+                slot_progress(slot, n)
+            except Exception:
+                pass
         model_name = team.models[slot - 1].model
         slot_sys = _slot_system_prompt(roster, slot=slot, n_total=n)
         system = build_system_block(extra_system=slot_sys)

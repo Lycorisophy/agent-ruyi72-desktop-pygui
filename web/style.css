@@ -829,6 +829,20 @@ body.split-active .pane-secondary {
   align-items: center;
 }
 
+.dialogue-state-bar {
+  font-size: 12px;
+  line-height: 1.35;
+  min-height: 1.35em;
+  color: var(--text-soft);
+  padding: 0 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dialogue-state-bar.dialogue-state-warning {
+  color: var(--warning-text);
+}
+
 .prompt-chip {
   font: inherit;
   font-size: 11px;

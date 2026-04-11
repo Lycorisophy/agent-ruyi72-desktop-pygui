@@ -263,6 +263,7 @@ class PersonaRuntime:
         if not text:
             return
         self._streaming = True
+        started_stream = False
         try:
             if not self._svc.persona_prepare_turn(text):
                 self._emit_safe(
@@ -270,6 +271,8 @@ class PersonaRuntime:
                 )
                 return
             self._emit_safe({"type": "turn.started", "turn_id": tid, "user_text": text})
+            self._svc.set_dialogue_phase("streaming", last_turn_id=tid)
+            started_stream = True
 
             skills_prompt = build_safe_skills_prompt()
             system_block = build_system_block(extra_system=skills_prompt or None)
@@ -330,4 +333,6 @@ class PersonaRuntime:
                 )
         finally:
             self._streaming = False
+            if started_stream:
+                self._svc.set_dialogue_phase("idle")
             self._emit_safe({"type": "turn.finished", "turn_id": tid})

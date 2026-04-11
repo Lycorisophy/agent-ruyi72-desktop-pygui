@@ -483,7 +483,7 @@ async function updateContextRail() {
       <li><strong>run_shell</strong> — 在工作区根目录执行 shell 命令</li>
       <li><strong>load_skill</strong> — 按名称加载技能文档</li>
       <li><strong>browse_memory</strong> — 浏览跨会话记忆摘要</li>
-      <li><strong>search_memory</strong> — 按关键词搜索记忆</li>
+      <li><strong>search_memory</strong> — 按关键词搜索记忆（可选按事件的 world_kind / temporal_kind 过滤）</li>
     </ul>`;
   } else {
     toolsHtml +=
@@ -871,9 +871,28 @@ let personaTurnActive = false;
 let reactStreamProgressEl = null;
 let reactStreamLines = [];
 
+/** ReAct 运行中节流拉取 dialogue_state（更新状态条步序，避免每步打 API） */
+let dialogueStateRefreshTimer = null;
+
+function scheduleDialogueStateRefreshFromReact() {
+  if (dialogueStateRefreshTimer) return;
+  dialogueStateRefreshTimer = setTimeout(() => {
+    dialogueStateRefreshTimer = null;
+    refreshDialogueState().catch(() => {});
+  }, 450);
+}
+
 function dispatchReactEvent(evt) {
   if (!evt || typeof evt !== "object") return;
   const t = evt.type;
+  if (t === "react.start") {
+    scheduleDialogueStateRefreshFromReact();
+    return;
+  }
+  if (t === "react.done") {
+    refreshDialogueState().catch(() => {});
+    return;
+  }
   if (t === "react.progress" && reactStreamProgressEl) {
     const line = String(evt.line || "").trim();
     if (!line) return;
@@ -884,6 +903,7 @@ function dispatchReactEvent(evt) {
     reactStreamProgressEl.textContent = reactStreamLines.join("\n");
     reactStreamProgressEl.scrollTop = reactStreamProgressEl.scrollHeight;
     scrollMessagesToEnd();
+    scheduleDialogueStateRefreshFromReact();
   }
 }
 
@@ -899,10 +919,75 @@ function personaResetStreamDom() {
   personaTurnActive = false;
 }
 
+/** @param {{ phase?: string, last_error?: string | null, state_extension?: Record<string, unknown> }} snap */
+function updateDialogueStateBarFromSnapshot(snap) {
+  const bar = document.getElementById("dialogue-state-bar");
+  if (!bar) return;
+  const phase = snap && snap.phase;
+  const err =
+    snap && snap.last_error != null && String(snap.last_error).trim()
+      ? String(snap.last_error).trim()
+      : "";
+  bar.classList.toggle("dialogue-state-warning", Boolean(err));
+  if (err) {
+    bar.textContent = err;
+    bar.hidden = false;
+    return;
+  }
+  const labels = {
+    idle: "就绪",
+    streaming: "输出中…",
+    react_running: "ReAct 中…",
+    team_running: "团队编排中…",
+    followup_pending: "后续处理中…",
+  };
+  const base = labels[phase] || (phase && phase !== "idle" ? String(phase) : "");
+  const ext = snap && snap.state_extension;
+  let line = base;
+  if (ext && typeof ext === "object") {
+    const team = /** @type {{ current_slot?: number, team_size?: number }} */ (ext.team);
+    const react = /** @type {{ step_index?: number }} */ (ext.react);
+    if (team && team.current_slot != null && phase === "team_running") {
+      const sz = team.team_size != null ? team.team_size : "?";
+      line = `${base} · A${team.current_slot}/${sz}`;
+    } else if (react && react.step_index != null && phase === "react_running") {
+      line = `${base} · 步序 ${react.step_index}`;
+    }
+  }
+  bar.textContent = line;
+  bar.hidden = !line || phase === "idle";
+}
+
+async function refreshDialogueState() {
+  try {
+    const apiFn = api();
+    if (!apiFn || typeof apiFn.get_dialogue_state !== "function") return;
+    const res = await apiFn.get_dialogue_state();
+    if (res && res.ok !== false) {
+      updateDialogueStateBarFromSnapshot(res);
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 function dispatchPersonaEvent(evt) {
   if (!evt || !evt.type) return;
   const box = document.getElementById("messages");
   const t = evt.type;
+
+  if (t === "state.changed") {
+    const snap = {
+      phase: evt.phase,
+      last_error: evt.last_error,
+      state_extension: evt.state_extension,
+    };
+    if (evt.recovered && evt.message) {
+      snap.last_error = evt.message;
+    }
+    updateDialogueStateBarFromSnapshot(snap);
+    return;
+  }
 
   if (t === "turn.started") {
     messageRenderGen += 1;
@@ -1926,6 +2011,7 @@ async function openSession(id) {
   applyMetaToForm(data.meta);
   renderMessages(data.messages, { instant: true });
   await renderSessionList();
+  await refreshDialogueState();
 }
 
 /**
@@ -1940,6 +2026,7 @@ async function refreshActive(options) {
     typewriterLastAssistant: opts.typewriterLastAssistant === true,
   });
   await renderSessionList();
+  await refreshDialogueState();
 }
 
 async function pushWorkspaceAndMode() {
@@ -2014,6 +2101,7 @@ async function onSubmit(e) {
       appendMessage("assistant", "调用失败：" + String(err), true);
     } finally {
       setBusy(false);
+      refreshDialogueState().catch(() => {});
     }
     return;
   }
@@ -2063,6 +2151,7 @@ async function onSubmit(e) {
       appendMessage("assistant", "调用失败：" + String(err), true);
     } finally {
       setBusy(false);
+      refreshDialogueState().catch(() => {});
     }
     return;
   }

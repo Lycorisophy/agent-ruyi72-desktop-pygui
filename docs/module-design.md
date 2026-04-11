@@ -93,6 +93,7 @@ flowchart TB
 - **团队**：`run_team_turn`，配置来自 `team.models`；详见 [agent-team-mode.md](agent-team-mode.md)。
 - **交互卡片**：解析见 [action_card.py](../src/agent/action_card.py)（支持 fenced 与 `<action_card>`）；确认后可能触发一轮 follow-up Chat。
 - **UI 辅助 API**：`preview_workspace_file`（读文本文件）、`list_workspace_preview`（列目录元信息，不读文件内容）。
+- **对话状态**：全模式统一的相位与持久化，见 [对话状态追踪设计.md](对话状态追踪设计.md)；已实现内存 `phase`、`state.changed`、`Api.get_dialogue_state` 及会话目录 **`dialogue_state.json`**（打开会话时对陈旧「进行中」相位降级恢复）。
 
 **边界**：不实现 HTTP 路由；所有入口来自 `Api`。
 
@@ -122,9 +123,11 @@ flowchart TB
 - [src/agent/tools.py](../src/agent/tools.py)：`safe_child`、`tool_read_file` / `tool_list_dir` / `tool_run_shell`。
 - [src/agent/react.py](../src/agent/react.py)：对 `react_lc.run_react` 的薄封装。
 
-**工具列表（与界面右侧说明一致）**：`read_file`、`list_dir`、`run_shell`、`load_skill`、`browse_memory`、`search_memory`。
+**工具列表（与界面右侧说明一致）**：`read_file`、`list_dir`、`run_shell`、`load_skill`、`browse_memory`、`search_memory`（`search_memory` 可对事件按 `event_world_kinds` / `event_temporal_kinds` 可选过滤，见 v3.0 专篇）。
 
 **边界**：高危技能内容在 `load_skill` 返回中提示用户确认；实际执行仍受 shell/用户约束。
+
+**演进（目标设计，当前未实现）**：若引入企业级流式工具管线，可在解析层对 `tool_calls` 做名/参数字符串纠错（L1），在执行层对瞬时失败做限次退避重试，并将结构化错误回灌模型以触发参数纠错式「二次调用」；详见 [企业级Agent工具调用综合方案.md](企业级Agent工具调用综合方案.md) 中的 **模块 6：工具调用纠错与重试机制**。
 
 ---
 
@@ -180,7 +183,8 @@ flowchart TB
 **目的**：跨会话结构化存储事实、事件、关系；支持关键词检索与在 ReAct 中的只读工具。
 
 **专篇（当前实现）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v1.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v1.0）.md)  
-**目标设计（v2.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)
+**目标设计（v2.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)  
+**三期增量（v3.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v3.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v3.0）.md) — 事件中 **`world_kind` / `temporal_kind` / `planned_window`** 已落地；**`search_memory`** 可按类型过滤事件；会话冷启动块（`build_memory_bootstrap_block`）默认 **`memory.bootstrap_exclude_fictional_events`** 排除虚构事件。其余以 v3 专篇为准。
 
 **相关代码**：[src/storage/memory_store.py](../src/storage/memory_store.py)、[src/agent/memory_extractor.py](../src/agent/memory_extractor.py)、[src/agent/memory_tools.py](../src/agent/memory_tools.py)；前端「记住 / 浏览记忆」经 `Api.extract_memory` / `browse_memory`。
 
