@@ -280,9 +280,7 @@ class PersonaRuntime:
             if mem:
                 system_block = system_block + "\n\n" + mem
 
-            call_messages: list[dict[str, str]] = [{"role": "system", "content": system_block}]
-            call_messages.extend(self._svc.messages_for_llm())
-            call_messages.append({"role": "user", "content": text})
+            call_messages = self._svc.build_persona_turn_call_messages(system_block, text)
 
             think = self._svc.persona_config().stream_think and self._svc.llm_config().api_mode == "native"
 

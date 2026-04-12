@@ -76,7 +76,10 @@ persona:
 # memory:
 #   backend: jsonl   # jsonl | dual | sqlite；dual/sqlite 时启动会尝试从 *.jsonl 一次性导入 memory.db
 #   sqlite_path: "" # 空则为 %USERPROFILE%\.ruyi72\memory\memory.db
-#   vector_enabled: false   # true 且 llm.provider=ollama 时，important 事实写入后异步量化为向量
+#   vector_enabled: false   # true 且 llm.provider=ollama 时，important 事实与事件写入后写入向量（事实/事件表见 memory.db）
+#   vector_index_fictional_events: false  # 为 true 时也对 world_kind=fictional 的事件建 event_embeddings
+#   bootstrap_planned_summary_enabled: true   # 冷启动是否单独展示「近期计划（摘要）」
+#   bootstrap_planned_events_max: 3           # 近期计划条数上限 0～20；0 则与主事件区合并展示
 #   messages_index_enabled: false  # true 时每次保存会话消息会重建该会话在 memory.db 的 FTS（供 search_history）
 #   extract_llm_timeout_sec: 300  # 主动/闲时记忆抽取的 LLM 读超时（秒，60～3600）；大模型或长粘贴可调高如 600
 #   extract_max_input_chars: 16000  # 单次抽取粘贴文本最大字符数；超出则拒绝（可分段提取或调大）
@@ -89,3 +92,24 @@ persona:
 #   tick_interval_sec: 20
 #   max_sessions_scanned: 50
 #   max_tasks_per_tick: 3
+
+# 上文压缩：检查点 context_checkpoint.json；不删 messages.json，仅影响喂给模型的视图（见 docs/module-design.md 第 15 节）
+# context_compression:
+#   enabled: false
+#   context_token_budget: 32000      # 粗估 token 预算（len/4）
+#   pre_send_threshold: 0.85         # 超过 budget * 此比例则尝试压缩
+#   max_summary_chars: 8000
+#   summary_max_tokens: 1024         # 摘要专用单次生成上限
+#   max_message_chars_phase_a: 24000 # 阶段 A：单条过长时头尾截断
+#   idle_compress_interval_sec: 0    # 0 表示禁用；与内置调度 tick 联动，空闲时尝试压一轮
+#   post_reply_compress: false       # 安全模式每轮回复落盘后是否再尝试压缩
+
+# 助手输出检查：引用链接、异步存疑、按节评审（sessions/<id>/output_annotations.json）
+# output_review:
+#   enabled: false
+#   checker_model: ""               # 空则沿用 llm.model；可填较小模型以省资源
+#   checker_max_tokens: 1024
+#   checker_max_input_chars: 12000
+#   checker_timeout_sec: 90
+#   async_doubt_after_reply: false   # 为 true 时前端拉取后会排队异步存疑（后台线程）
+#   show_section_buttons: true       # 解析出章节标题时显示「检查本节」

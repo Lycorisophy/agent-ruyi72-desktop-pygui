@@ -35,6 +35,7 @@ from src.agent.memory_tools import (  # noqa: E402
     get_recent_memory_for_api,
 )
 from src.service.conversation import ConversationService, resolve_sessions_root  # noqa: E402
+from src.service import output_review as output_review_mod  # noqa: E402
 from src.skills.loader import get_registry  # noqa: E402
 from src.storage.memory_store import MemoryStore, default_store  # noqa: E402
 from src.storage.memory_sqlite import maybe_migrate_jsonl  # noqa: E402
@@ -131,6 +132,9 @@ class Api:
             "persona_proactive_enabled": per.proactive_enabled,
             "persona_proactive_idle_seconds": per.proactive_idle_seconds,
             "persona_proactive_max_per_day": per.proactive_max_per_day,
+            "output_review_enabled": self._cfg.output_review.enabled,
+            "output_review_async_doubt": self._cfg.output_review.async_doubt_after_reply,
+            "output_review_section_buttons": self._cfg.output_review.show_section_buttons,
         }
 
     def get_llm_defaults(self) -> dict:
@@ -380,6 +384,81 @@ class Api:
     def list_scheduled_task_runs(self, payload: object = None) -> dict:
         """只读聚合全局 global_task_runs.log 与各会话 task_runs.log（尾部）。"""
         return list_task_run_entries(self._svc.store, self._cfg)
+
+    def get_message_annotations(
+        self, session_id: str | None = None, message_index: int = -1
+    ) -> dict:
+        """助手消息输出检查：引用、存疑、章节；持久化于会话目录 output_annotations.json。"""
+        sid = (session_id or "").strip()
+        if not sid:
+            g = self._svc.get_active()
+            m = g.get("meta") or {}
+            sid = str(m.get("id") or "").strip()
+        if not sid:
+            return {"ok": False, "error": "无会话"}
+        try:
+            _, messages = self._svc.store.load(sid)
+        except (OSError, FileNotFoundError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        session_dir = self._svc.session_path_for(sid)
+        return output_review_mod.api_get_message_annotations(
+            self._cfg, session_dir, messages, int(message_index)
+        )
+
+    def request_output_review(
+        self,
+        session_id: str | None = None,
+        message_index: int = -1,
+        user_context: str = "",
+    ) -> dict:
+        """异步触发存疑检查（需 async_doubt_after_reply）。"""
+        sid = (session_id or "").strip()
+        if not sid:
+            g = self._svc.get_active()
+            m = g.get("meta") or {}
+            sid = str(m.get("id") or "").strip()
+        if not sid:
+            return {"ok": False, "error": "无会话"}
+        try:
+            _, messages = self._svc.store.load(sid)
+        except (OSError, FileNotFoundError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        session_dir = self._svc.session_path_for(sid)
+        return output_review_mod.api_request_output_review(
+            self._cfg,
+            session_dir,
+            messages,
+            int(message_index),
+            user_context=user_context or "",
+        )
+
+    def review_message_section(
+        self,
+        session_id: str | None = None,
+        message_index: int = -1,
+        section_id: str = "",
+    ) -> dict:
+        """按小节调用检查模型。"""
+        sid = (session_id or "").strip()
+        if not sid:
+            g = self._svc.get_active()
+            m = g.get("meta") or {}
+            sid = str(m.get("id") or "").strip()
+        if not sid:
+            return {"ok": False, "error": "无会话"}
+        try:
+            _, messages = self._svc.store.load(sid)
+        except (OSError, FileNotFoundError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        session_dir = self._svc.session_path_for(sid)
+        with self._svc.llm_busy():
+            return output_review_mod.api_review_message_section(
+                self._cfg,
+                session_dir,
+                messages,
+                int(message_index),
+                (section_id or "").strip(),
+            )
 
 
 def main() -> None:

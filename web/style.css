@@ -1855,3 +1855,62 @@ body.split-active .pane-secondary {
   font-size: 12px;
   color: var(--text-tertiary);
 }
+
+/* 助手输出检查（Markdown + 引用/存疑条） */
+.msg-md-body {
+  line-height: 1.5;
+}
+.msg-md-body a {
+  color: var(--text-link);
+  word-break: break-all;
+}
+.msg-md-body pre {
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-app) 88%, var(--accent) 12%);
+  border: 1px solid var(--border-default);
+  font-size: 12px;
+}
+.msg-output-review-strip {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-app) 92%, var(--accent) 8%);
+  border: 1px solid color-mix(in srgb, var(--border-default) 80%, var(--accent-border) 20%);
+}
+.msg-orw-row {
+  margin: 4px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.msg-orw-label {
+  flex: 0 0 auto;
+  color: var(--text-role-muted);
+  font-weight: 600;
+}
+.msg-orw-link {
+  color: var(--text-link);
+}
+.msg-orw-doubt-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-assistant) 85%, #a04040 15%);
+  border: 1px dashed color-mix(in srgb, var(--border-default) 70%, #a04040 30%);
+  cursor: help;
+  font-size: 11px;
+}
+.msg-orw-sections {
+  margin-top: 4px;
+}
+.msg-orw-sec-btn {
+  margin-right: 4px;
+  margin-bottom: 4px;
+}

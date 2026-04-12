@@ -68,6 +68,54 @@ def _index_important_facts_vector(cfg: RuyiConfig, facts: list[Fact]) -> None:
         conn.close()
 
 
+def _index_events_vector(cfg: RuyiConfig, events: list[Event]) -> None:
+    if not cfg.memory.vector_enabled or cfg.llm.provider != "ollama" or not events:
+        return
+    from src.storage.memory_sqlite import (
+        connect_memory_db,
+        delete_event_embedding,
+        ensure_schema,
+        event_embedding_text_from_event,
+        upsert_event_embedding,
+    )
+
+    llm_e = embedding_http_llm_cfg(cfg)
+    model = cfg.embedding.model.strip()
+    store = default_store()
+    conn = connect_memory_db(store.root, cfg)
+    index_fic = cfg.memory.vector_index_fictional_events
+    try:
+        ensure_schema(conn)
+        for e in events:
+            wk = normalize_event_world_kind(e.world_kind)
+            if wk == "fictional" and not index_fic:
+                try:
+                    delete_event_embedding(conn, e.id)
+                except Exception:
+                    pass
+                continue
+            embed_text = event_embedding_text_from_event(e)
+            if not embed_text:
+                continue
+            try:
+                vec = ollama_embed_one(llm_e, model, embed_text)
+            except OllamaClientError:
+                continue
+            except Exception:
+                continue
+            upsert_event_embedding(
+                conn,
+                event_id=e.id,
+                model=model,
+                embed_text=embed_text,
+                vector=vec,
+                created_at=e.created_at,
+                world_kind=wk,
+            )
+    finally:
+        conn.close()
+
+
 EXTRACT_SYSTEM_PROMPT = """
 你是一个记忆抽取助手。现在给你一段中文或英文文本，请你从中提取三类结构化记忆：
 
@@ -511,6 +559,9 @@ def extract_and_store_from_text(
         sync_sqlite_append(cfg, store.root, facts=fact_objs, events=event_objs, relations=rel_objs)
     except Exception as e:
         _LOG.debug("memory_extract sync_sqlite_append skipped: %s", e)
+
+    if event_objs:
+        _index_events_vector(cfg, event_objs)
 
     _LOG.info(
         "memory_extract stored llm_ms=%.0f facts=%d pending_identity=%d events=%d relations=%d",

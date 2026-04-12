@@ -298,6 +298,89 @@ class MemoryStore:
                 break
         return out
 
+    def read_recent_events_main_for_bootstrap(
+        self,
+        limit: int,
+        *,
+        exclude_world_kinds: frozenset[str],
+        exclude_planned_temporal: bool,
+    ) -> list[dict]:
+        """冷启动主事件区；exclude_planned_temporal 为 True 时排除 future_planned / future_uncertain。"""
+        path = self._path_for("events")
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        lim = max(1, int(limit))
+        tail_n = min(len(lines), max(lim * 15, 50), 500)
+        segment = lines[-tail_n:]
+        planned_t = frozenset({"future_planned", "future_uncertain"})
+        out: list[dict] = []
+        for line in reversed(segment):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            wk = normalize_event_world_kind(obj.get("world_kind"))
+            if exclude_world_kinds and wk in exclude_world_kinds:
+                continue
+            tk = normalize_event_temporal_kind(obj.get("temporal_kind"))
+            if exclude_planned_temporal and tk in planned_t:
+                continue
+            out.append(obj)
+            if len(out) >= lim:
+                break
+        return out
+
+    def read_recent_planned_events_for_bootstrap(
+        self,
+        limit: int,
+        *,
+        exclude_world_kinds: frozenset[str],
+    ) -> list[dict]:
+        """冷启动「近期计划」：仅 future_planned / future_uncertain，较新优先。"""
+        if limit <= 0:
+            return []
+        path = self._path_for("events")
+        if not path.is_file():
+            return []
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        lim = max(1, int(limit))
+        tail_n = min(len(lines), max(lim * 20, 50), 500)
+        segment = lines[-tail_n:]
+        planned_t = frozenset({"future_planned", "future_uncertain"})
+        out: list[dict] = []
+        for line in reversed(segment):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            wk = normalize_event_world_kind(obj.get("world_kind"))
+            if exclude_world_kinds and wk in exclude_world_kinds:
+                continue
+            tk = normalize_event_temporal_kind(obj.get("temporal_kind"))
+            if tk not in planned_t:
+                continue
+            out.append(obj)
+            if len(out) >= lim:
+                break
+        return out
+
 
 def default_store() -> MemoryStore:
     return MemoryStore(None)

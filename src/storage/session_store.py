@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from src.agent.action_card import sanitize_card_from_storage
+from src.agent.context_compression import ContextCheckpoint
 from src.storage.memory_store import default_store
 
 if TYPE_CHECKING:
@@ -347,6 +348,30 @@ class SessionStore:
             return raw if isinstance(raw, dict) else None
         except (OSError, json.JSONDecodeError):
             return None
+
+    def load_context_checkpoint(self, session_id: str) -> ContextCheckpoint | None:
+        """读取 `context_checkpoint.json`；不存在或损坏时返回 None。"""
+        try:
+            d = self._resolved_session_dir(session_id)
+        except ValueError:
+            return None
+        p = d / "context_checkpoint.json"
+        if not p.is_file():
+            return None
+        try:
+            return ContextCheckpoint.model_validate_json(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def save_context_checkpoint(self, session_id: str, ck: ContextCheckpoint) -> None:
+        """写入会话目录 `context_checkpoint.json`（与 meta.json 同级）。"""
+        d = self._resolved_session_dir(session_id)
+        if not d.is_dir():
+            raise FileNotFoundError(session_id)
+        (d / "context_checkpoint.json").write_text(
+            ck.model_dump_json(ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def save_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         d = self._session_dir(session_id)

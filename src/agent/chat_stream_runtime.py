@@ -204,6 +204,7 @@ class SafeChatStreamRuntime:
                         "thinking": thinking,
                     }
                 )
+                self._svc.maybe_compress_post_reply_if_needed()
         finally:
             self._streaming = False
             if started_stream:

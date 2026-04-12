@@ -70,6 +70,7 @@ flowchart TB
 **要点**：
 
 - `SessionMeta`：`mode`（`chat` / `react` / `persona`）、`workspace`、`react_max_steps`、`session_variant`（`standard` | `team` | `knowledge`）、`team_size`（仅团队）、`kb_preset`（仅知识库，如 `general` / `ingest` / `summarize` / `qa`）。
+- 可选 **会话形象**：`avatar_mode`（`off` / `live2d` / `pixel`）、`avatar_ref`（bundled 或相对会话目录的语义化引用，校验见存储层）；前端与资源约定见 [session-avatar-design.md](session-avatar-design.md)（不调用 LLM）。
 - Pydantic 校验：`team` 必须带 `team_size`；`knowledge` 无 `team_size` 且可默认 `kb_preset`；`standard` 清除团队与知识库专用字段。
 - 全文搜索会话用于侧栏搜索：[SessionStore.search_full_text](src/storage/session_store.py)。
 
@@ -184,7 +185,7 @@ flowchart TB
 
 **专篇（当前实现）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v1.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v1.0）.md)  
 **目标设计（v2.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v2.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v2.0）.md)  
-**三期增量（v3.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v3.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v3.0）.md) — 事件中 **`world_kind` / `temporal_kind` / `planned_window`** 已落地；**`search_memory`** 可按类型过滤事件；会话冷启动块（`build_memory_bootstrap_block`）默认 **`memory.bootstrap_exclude_fictional_events`** 排除虚构事件。其余以 v3 专篇为准。
+**三期增量（v3.0）**：[AI智能体ruyi72 记忆系统（永驻+事件）设计（v3.0）.md](AI智能体ruyi72%20记忆系统（永驻+事件）设计（v3.0）.md) — 事件 v3 字段、**`search_memory`** 类型过滤、冷启动排除虚构与 **「近期计划」** 分轨、**`event_embeddings`** 与 **`search_memory_semantic`**（事实+事件，可选虚构事件向量）。详见 v3 专篇与 `memory.*` 配置。
 
 **相关代码**：[src/storage/memory_store.py](../src/storage/memory_store.py)、[src/agent/memory_extractor.py](../src/agent/memory_extractor.py)、[src/agent/memory_tools.py](../src/agent/memory_tools.py)；前端「记住 / 浏览记忆」经 `Api.extract_memory` / `browse_memory`。
 
@@ -234,6 +235,41 @@ flowchart TB
 **API**（`Api`）：`list_scheduled_tasks`、`save_scheduled_task`、`delete_scheduled_task`。
 
 **边界**：Web UI 可后续接入；`call_llm_prompt` 等未实现。
+
+---
+
+## 15. 上文压缩（context checkpoint）
+
+**目的**：在接近上下文预算时，用会话目录内的检查点折叠早期轮次，向模型提供「摘要 + 尾部消息」视图，而不删除侧栏可见的 `messages.json` 全文。
+
+**关键文件**：[src/agent/context_compression.py](../src/agent/context_compression.py)、[src/service/conversation.py](../src/service/conversation.py) 中 `messages_for_llm` / `build_safe_chat_call_messages`、ReAct 与团队入口；持久化：[src/storage/session_store.py](../src/storage/session_store.py) 的 `context_checkpoint.json`（与 `meta.json` 同目录）。
+
+**语义**：
+
+- `anchor_message_index`：下标 `< anchor` 的扁平消息已折叠进 `summary_text`；`>= anchor` 为仍逐条传给模型的尾部。
+- 摘要块在拼装中位于主 `system`（工作区、技能等）之后；摘要条目当前使用 `user` 角色，以便团队模式等仅转发 `user`/`assistant` 的路径仍能带上摘要。
+
+**触发**：发主请求前按整包粗估 token（字符/4）与 `context_token_budget * pre_send_threshold` 比较；可选 `post_reply_compress`（安全模式流式一轮结束后）、`idle_compress_interval_sec`（与内置调度同线程，在 `is_idle_for_context_compress` 为真时尝试）。压缩摘要调用走 `llm_busy()`，与流式/ReAct 并发由相位与锁规避。
+
+**配置**：见 `RuyiConfig.context_compression` 与 `config/ruyi72.example.yaml` 注释。
+
+**边界**：token 为粗估；与侧栏全文不一致是预期行为。
+
+---
+
+## 16. 助手输出检查（output_review）
+
+**目的**：对助手正文做**引用提取**（URL）、可选 **异步存疑**（小模型 JSON span）、**按节自检**；增强数据与 `messages.json` 分离，持久化 `sessions/<id>/output_annotations.json`。
+
+**ReAct 工具引用**：`run_react` 结束时将「最后一条 AIMessage 之前」的 `ToolMessage` 中解析出的 `citations` 写入该轮**最后一条助手消息**的 `tool_citations` 字段（仅落盘，不进入 `messages_for_llm`）；`get_message_annotations` 合并进 `output_annotations`（见 [助手输出检查设计.md](助手输出检查设计.md) 契约）。**JSON `citations` 优先**；若仍无有效条目且工具属于记忆/检索白名单，则对 `ToolMessage` 正文调用 `extract_urls_as_tool_citation_rows`（[output_review_sync.py](../src/service/output_review_sync.py)），**无 UTF-16 偏移**，仅侧栏；专篇见同一文档「URL 兜底」。
+
+**关键文件**：[src/service/output_review.py](../src/service/output_review.py)、[src/service/output_review_sync.py](../src/service/output_review_sync.py)、[src/service/utf16_text.py](../src/service/utf16_text.py)；[src/agent/react_lc.py](../src/agent/react_lc.py)（`collect_citation_rows_from_agent_messages`）；前端 [web/app.js](../web/app.js)（`marked` + `DOMPurify`、检查条 UI）。
+
+**API**（`Api`）：`get_message_annotations`、`request_output_review`、`review_message_section`；配置 `RuyiConfig.output_review`。
+
+**专篇**：[助手输出检查设计.md](助手输出检查设计.md)
+
+**边界**：存疑为启发式提示；Markdown 渲染仅对助手气泡在功能开启时启用。
 
 ---
 

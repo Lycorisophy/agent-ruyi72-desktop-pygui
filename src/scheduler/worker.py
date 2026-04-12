@@ -209,6 +209,10 @@ def _loop(svc: ConversationService) -> None:
                 _LOG.debug("scheduler skip tick: not idle")
                 continue
             process_due_tasks(svc, cfg)
+            try:
+                svc.try_idle_context_compress()
+            except Exception:
+                _LOG.debug("idle context compress skipped", exc_info=True)
         except Exception:
             _LOG.exception("scheduler tick failed")
 

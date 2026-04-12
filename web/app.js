@@ -138,7 +138,10 @@ function createMessageBubble(role, isError, opts) {
     btn.type = "button";
     btn.addEventListener("click", async () => {
       try {
-        await copyToClipboard(body.textContent || "");
+        const raw = body.dataset && body.dataset.rawText;
+        await copyToClipboard(
+          raw != null && raw !== "" ? raw : body.textContent || ""
+        );
         const prev = btn.textContent;
         btn.textContent = "已复制";
         setTimeout(() => {
@@ -187,6 +190,238 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** UTF-16 码元切片（与后端 output_review 一致） */
+function sliceUtf16Str(s, startU, endU) {
+  const t = String(s || "");
+  let u = 0;
+  let out = "";
+  for (const ch of t) {
+    const cp = ch.codePointAt(0);
+    const w = cp > 0xffff ? 2 : 1;
+    const next = u + w;
+    if (next > startU && u < endU) {
+      out += ch;
+    }
+    u = next;
+    if (u >= endU) break;
+  }
+  return out;
+}
+
+function renderAssistantMarkdown(text) {
+  const raw = String(text || "");
+  if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+    return escapeHtml(raw).replace(/\n/g, "<br />");
+  }
+  try {
+    marked.setOptions({ gfm: true, breaks: true });
+    const dirty = marked.parse(raw);
+    return DOMPurify.sanitize(dirty, {
+      ALLOWED_TAGS: [
+        "a",
+        "p",
+        "br",
+        "strong",
+        "em",
+        "code",
+        "pre",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+        "hr",
+      ],
+      ALLOWED_ATTR: ["href", "title", "class"],
+      ALLOW_DATA_ATTR: false,
+    });
+  } catch (_) {
+    return escapeHtml(raw).replace(/\n/g, "<br />");
+  }
+}
+
+function removeOutputReviewStrip(wrap) {
+  const old = wrap && wrap.querySelector(".msg-output-review-strip");
+  if (old) old.remove();
+}
+
+/**
+ * @param {HTMLElement} wrap
+ * @param {HTMLElement} bodyEl
+ * @param {number} messageIndex
+ * @param {string} rawText
+ */
+async function enrichAssistantOutputReview(wrap, bodyEl, messageIndex, rawText) {
+  removeOutputReviewStrip(wrap);
+  if (!outputReviewEnabled || !currentSessionId || !wrap || !bodyEl) return;
+  try {
+    const r = await withLlmApiLog("get_message_annotations", () =>
+      api().get_message_annotations(currentSessionId, messageIndex)
+    );
+    if (!r || !r.ok || !r.enabled || !r.annotation) return;
+    const ann = r.annotation;
+    const strip = document.createElement("div");
+    strip.className = "msg-output-review-strip";
+    strip.setAttribute("role", "region");
+    strip.setAttribute("aria-label", "输出检查");
+
+    const cites = ann.citations || [];
+    if (cites.length) {
+      const row = document.createElement("div");
+      row.className = "msg-orw-row";
+      const lab = document.createElement("span");
+      lab.className = "msg-orw-label";
+      lab.textContent = "引用";
+      row.appendChild(lab);
+      cites.forEach((c, i) => {
+        const url = String(c.url || "").trim();
+        if (!url) return;
+        const a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.className = "msg-orw-link";
+        a.textContent = (c.title && String(c.title).trim()) || url;
+        if (i) row.appendChild(document.createTextNode(" · "));
+        row.appendChild(a);
+      });
+      strip.appendChild(row);
+    }
+
+    const doubts = ann.doubts || [];
+    if (doubts.length) {
+      const row = document.createElement("div");
+      row.className = "msg-orw-row msg-orw-doubts";
+      const lab = document.createElement("span");
+      lab.className = "msg-orw-label";
+      lab.textContent = "存疑";
+      row.appendChild(lab);
+      doubts.forEach((d) => {
+        const s = Number(d.start);
+        const e = Number(d.end);
+        const sn = sliceUtf16Str(rawText, s, e);
+        if (!sn) return;
+        const sp = document.createElement("span");
+        sp.className = "msg-orw-doubt-chip";
+        sp.title = String(d.reason || "").trim() || "存疑";
+        sp.textContent =
+          sn.length > 80 ? sn.slice(0, 77) + "…" : sn;
+        row.appendChild(sp);
+      });
+      strip.appendChild(row);
+    }
+
+    if (outputReviewSectionButtons && (ann.sections || []).length) {
+      const row = document.createElement("div");
+      row.className = "msg-orw-row msg-orw-sections";
+      (ann.sections || []).forEach((sec) => {
+        const sid = String(sec.id || "");
+        const title = String(sec.title || sid || "").slice(0, 48);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-small btn-ghost msg-orw-sec-btn";
+        btn.textContent = `检查「${title || "本节"}」`;
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const rr = await withLlmApiLog("review_message_section", () =>
+              api().review_message_section(
+                currentSessionId,
+                messageIndex,
+                sid
+              )
+            );
+            if (rr && rr.ok && rr.review) {
+              const issues = (rr.review.issues || []).join("\n");
+              window.alert(
+                (rr.review.summary || "") +
+                  (issues ? "\n\n" + issues : "") ||
+                  "已完成检查。"
+              );
+            } else {
+              window.alert((rr && rr.error) || "检查失败");
+            }
+          } catch (e) {
+            window.alert(String(e));
+          } finally {
+            btn.disabled = false;
+          }
+        });
+        row.appendChild(btn);
+      });
+      strip.appendChild(row);
+    }
+
+    if (strip.childNodes.length) {
+      const cr = wrap.querySelector(".msg-copy-row");
+      if (cr) wrap.insertBefore(strip, cr);
+      else wrap.appendChild(strip);
+    }
+
+    function startDoubtPoll() {
+      let n = 0;
+      const poll = window.setInterval(async () => {
+        n += 1;
+        if (n > 30) {
+          window.clearInterval(poll);
+          return;
+        }
+        try {
+          const r2 = await api().get_message_annotations(
+            currentSessionId,
+            messageIndex
+          );
+          if (
+            r2 &&
+            r2.ok &&
+            r2.annotation &&
+            (r2.annotation.doubt_job_status === "done" ||
+              r2.annotation.doubt_job_status === "error")
+          ) {
+            window.clearInterval(poll);
+            await enrichAssistantOutputReview(
+              wrap,
+              bodyEl,
+              messageIndex,
+              rawText
+            );
+          }
+        } catch (_) {
+          window.clearInterval(poll);
+        }
+      }, 1200);
+    }
+
+    if (outputReviewAsyncDoubt) {
+      if (ann.doubt_job_status === "pending") {
+        startDoubtPoll();
+      } else if (ann.doubt_job_status !== "done" && ann.doubt_job_status !== "error") {
+        try {
+          await withLlmApiLog("request_output_review", () =>
+            api().request_output_review(currentSessionId, messageIndex, "")
+          );
+          startDoubtPoll();
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 function insertAtCursor(textarea, text) {
@@ -349,7 +584,14 @@ function setSplitActive(active) {
 }
 
 function openMessageInSplit(bodyEl) {
-  const t = (bodyEl && bodyEl.textContent) || "";
+  const raw =
+    bodyEl && bodyEl.dataset && bodyEl.dataset.rawText != null
+      ? bodyEl.dataset.rawText
+      : "";
+  const t =
+    raw !== ""
+      ? raw
+      : (bodyEl && bodyEl.textContent) || "";
   showSecondaryMessagePanel(t, "来自对话消息（纯文本）");
   setSplitActive(true);
 }
@@ -524,6 +766,11 @@ async function updateContextRail() {
 let currentSessionId = null;
 /** @type {object | null} */
 let lastSessionMeta = null;
+
+/** 助手输出检查（与 get_settings_snapshot 同步） */
+let outputReviewEnabled = false;
+let outputReviewAsyncDoubt = false;
+let outputReviewSectionButtons = true;
 
 function setAvatarSpeaking(on) {
   const stage = document.getElementById("avatar-strip-stage");
@@ -1107,7 +1354,13 @@ function normalizeWorkspaceInput(raw) {
   return s;
 }
 
-function startTypewriter(node, fullText, renderGen) {
+/**
+ * @param {HTMLElement | null} node
+ * @param {string} fullText
+ * @param {number} renderGen
+ * @param {(() => void) | undefined} onDone
+ */
+function startTypewriter(node, fullText, renderGen, onDone) {
   if (!node) return;
   node.textContent = "";
   const charsPerTick = 4;
@@ -1118,7 +1371,11 @@ function startTypewriter(node, fullText, renderGen) {
     node.textContent = fullText.slice(0, i);
     const box = document.getElementById("messages");
     if (box) box.scrollTop = box.scrollHeight;
-    if (i < fullText.length) requestAnimationFrame(tick);
+    if (i < fullText.length) {
+      requestAnimationFrame(tick);
+    } else if (typeof onDone === "function") {
+      onDone();
+    }
   }
   requestAnimationFrame(tick);
 }
@@ -1252,15 +1509,32 @@ function formatCardStatusLabel(card) {
  * @param {boolean} instant
  * @param {number} gen
  */
-function appendAssistantMessage(m, box, instant, gen) {
+function appendAssistantMessage(m, box, instant, gen, messageIndex) {
   const card = m.card;
   const text = m.content || "";
   if (!card) {
     const { wrap, body } = createMessageBubble("assistant", false, {
-      initialText: instant ? text : undefined,
+      initialText:
+        instant && !outputReviewEnabled ? text : undefined,
     });
     box.appendChild(wrap);
-    if (!instant) startTypewriter(body, text, gen);
+    if (outputReviewEnabled) {
+      body.dataset.rawText = text;
+      body.classList.add("msg-md-body");
+      if (instant) {
+        body.innerHTML = renderAssistantMarkdown(text);
+        enrichAssistantOutputReview(wrap, body, messageIndex, text);
+      } else {
+        startTypewriter(body, text, gen, () => {
+          body.innerHTML = renderAssistantMarkdown(text);
+          enrichAssistantOutputReview(wrap, body, messageIndex, text);
+        });
+      }
+    } else if (!instant) {
+      startTypewriter(body, text, gen);
+    } else {
+      body.textContent = text;
+    }
     return;
   }
 
@@ -1513,7 +1787,7 @@ function renderMessages(messages, options) {
       return;
     }
     if (role === "assistant") {
-      appendAssistantMessage(m, box, msgInstant, gen);
+      appendAssistantMessage(m, box, msgInstant, gen, idx);
     }
   });
   box.scrollTop = box.scrollHeight;
@@ -1732,6 +2006,9 @@ async function loadSettings() {
       ? `历史目录: ${s.sessions_root}`
       : "";
     teamMaxAgents = s.team_max_agents != null ? s.team_max_agents : 0;
+    outputReviewEnabled = s.output_review_enabled === true;
+    outputReviewAsyncDoubt = s.output_review_async_doubt === true;
+    outputReviewSectionButtons = s.output_review_section_buttons !== false;
     const teamBtn = document.getElementById("btn-team-session");
     if (teamBtn) {
       teamBtn.disabled = teamMaxAgents < 2;

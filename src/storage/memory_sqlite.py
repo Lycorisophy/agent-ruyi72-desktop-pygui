@@ -55,6 +55,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS event_embeddings (
+          event_id TEXT PRIMARY KEY,
+          model TEXT NOT NULL,
+          embed_text TEXT NOT NULL,
+          embedding_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          world_kind TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS memory_facts (
           id TEXT PRIMARY KEY,
           created_at TEXT NOT NULL,
@@ -203,6 +215,39 @@ def upsert_fact_embedding(
     conn.commit()
 
 
+def upsert_event_embedding(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    model: str,
+    embed_text: str,
+    vector: list[float],
+    created_at: str,
+    world_kind: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO event_embeddings
+          (event_id, model, embed_text, embedding_json, created_at, world_kind)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            model,
+            embed_text,
+            json.dumps(vector),
+            created_at,
+            world_kind,
+        ),
+    )
+    conn.commit()
+
+
+def delete_event_embedding(conn: sqlite3.Connection, event_id: str) -> None:
+    conn.execute("DELETE FROM event_embeddings WHERE event_id=?", (event_id,))
+    conn.commit()
+
+
 def _cosine(a: list[float], b: list[float]) -> float:
     if len(a) != len(b) or not a:
         return 0.0
@@ -238,6 +283,71 @@ def search_fact_embeddings(
         scored.append((str(fid), _cosine(query_vector, fv), str(etext or "")))
     scored.sort(key=lambda x: -x[1])
     return scored[: max(1, int(top_k))]
+
+
+def search_event_embeddings(
+    conn: sqlite3.Connection,
+    query_vector: list[float],
+    *,
+    top_k: int = 8,
+    include_fictional: bool = False,
+) -> list[tuple[str, float, str]]:
+    """事件语义检索；默认排除 world_kind=fictional（与向量索引策略一致）。"""
+    if include_fictional:
+        cur = conn.execute(
+            "SELECT event_id, embedding_json, embed_text, world_kind FROM event_embeddings"
+        )
+    else:
+        cur = conn.execute(
+            """
+            SELECT event_id, embedding_json, embed_text, world_kind FROM event_embeddings
+            WHERE COALESCE(world_kind, 'real') != 'fictional'
+            """
+        )
+    scored: list[tuple[str, float, str]] = []
+    for eid, ej, etext, _wk in cur.fetchall():
+        try:
+            vec = json.loads(ej)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(vec, list) or len(vec) != len(query_vector):
+            continue
+        try:
+            fv = [float(x) for x in vec]
+        except (TypeError, ValueError):
+            continue
+        scored.append((str(eid), _cosine(query_vector, fv), str(etext or "")))
+    scored.sort(key=lambda x: -x[1])
+    return scored[: max(1, int(top_k))]
+
+
+def event_embedding_text_from_event(e: "Event") -> str:
+    """与 FTS body 语义接近的拼接，供向量化。"""
+    from src.storage.memory_store import Event as EventCls
+
+    if not isinstance(e, EventCls):
+        return ""
+    pw_text = ""
+    if isinstance(e.planned_window, dict) and e.planned_window:
+        try:
+            pw_text = json.dumps(e.planned_window, ensure_ascii=False)
+        except (TypeError, ValueError):
+            pw_text = ""
+    return " ".join(
+        [
+            e.action or "",
+            e.result or "",
+            e.time or "",
+            e.location or "",
+            " ".join(e.triggers),
+            " ".join(e.subject_actors),
+            " ".join(e.object_actors),
+            " ".join(e.actors),
+            e.world_kind or "",
+            e.temporal_kind or "",
+            pw_text,
+        ]
+    ).strip()
 
 
 def _fts_match_expr(query: str) -> str | None:
@@ -676,6 +786,71 @@ def sqlite_read_recent_events_for_bootstrap(
     """
     params = tuple(exclude_world_kinds) + (lim,)
     cur = conn.execute(sql, params)
+    return [_row_to_event_dict(row) for row in cur.fetchall()]
+
+
+_PLANNED_TEMPORAL_SQL = ("future_planned", "future_uncertain")
+
+
+def sqlite_read_recent_events_main_for_bootstrap(
+    conn: sqlite3.Connection,
+    limit: int,
+    *,
+    exclude_world_kinds: frozenset[str],
+    exclude_planned_temporal: bool,
+) -> list[dict]:
+    """冷启动主事件区：可选排除 future_planned / future_uncertain（避免与「近期计划」重复）。"""
+    conn.row_factory = sqlite3.Row
+    lim = max(1, limit)
+    wheres: list[str] = []
+    params: list[object] = []
+    if exclude_world_kinds:
+        qs = ",".join("?" * len(exclude_world_kinds))
+        wheres.append(f"COALESCE(world_kind, 'real') NOT IN ({qs})")
+        params.extend(exclude_world_kinds)
+    if exclude_planned_temporal:
+        qs2 = ",".join("?" * len(_PLANNED_TEMPORAL_SQL))
+        wheres.append(f"COALESCE(temporal_kind, 'past') NOT IN ({qs2})")
+        params.extend(_PLANNED_TEMPORAL_SQL)
+    where_sql = f"WHERE {' AND '.join(wheres)}" if wheres else ""
+    params.append(lim)
+    sql = f"""
+        SELECT * FROM memory_events
+        {where_sql}
+        ORDER BY created_at DESC
+        LIMIT ?
+    """
+    cur = conn.execute(sql, tuple(params))
+    return [_row_to_event_dict(row) for row in cur.fetchall()]
+
+
+def sqlite_read_planned_events_for_bootstrap(
+    conn: sqlite3.Connection,
+    limit: int,
+    *,
+    exclude_world_kinds: frozenset[str],
+) -> list[dict]:
+    """冷启动「近期计划」：仅 future_planned / future_uncertain。"""
+    if limit <= 0:
+        return []
+    conn.row_factory = sqlite3.Row
+    lim = max(1, limit)
+    qs_t = ",".join("?" * len(_PLANNED_TEMPORAL_SQL))
+    params: list[object] = list(_PLANNED_TEMPORAL_SQL)
+    wheres = [f"COALESCE(temporal_kind, 'past') IN ({qs_t})"]
+    if exclude_world_kinds:
+        qs_w = ",".join("?" * len(exclude_world_kinds))
+        wheres.append(f"COALESCE(world_kind, 'real') NOT IN ({qs_w})")
+        params.extend(exclude_world_kinds)
+    where_sql = " AND ".join(wheres)
+    params.append(lim)
+    sql = f"""
+        SELECT * FROM memory_events
+        WHERE {where_sql}
+        ORDER BY created_at DESC
+        LIMIT ?
+    """
+    cur = conn.execute(sql, tuple(params))
     return [_row_to_event_dict(row) for row in cur.fetchall()]
 
 

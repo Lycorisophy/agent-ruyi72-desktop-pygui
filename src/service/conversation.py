@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +19,14 @@ from src.agent.action_card import (
 )
 from src.agent.memory_tools import build_memory_bootstrap_block
 from src.agent.chat_stream_runtime import SafeChatStreamRuntime
+from src.agent.context_compression import (
+    ContextCheckpoint,
+    apply_checkpoint_to_flat,
+    estimate_tokens_messages,
+    phase_a_trim_long_messages,
+    raw_flat_from_stored_messages,
+    run_compression_round,
+)
 from src.agent.persona_runtime import CHECKPOINT_NAME, PersonaRuntime
 from src.agent.react import run_react
 from src.agent.react_lc import run_scheduler_safe_agent
@@ -71,6 +81,9 @@ class ConversationService:
         self._dialogue_last_error: str | None = None
         self._dialogue_state_extension: dict[str, Any] = {}
         self._dialogue_lock = threading.Lock()
+        self._context_checkpoint = ContextCheckpoint()
+        self._context_compress_lock = threading.Lock()
+        self._last_idle_compress_mono: float = 0.0
 
     def set_dialogue_phase(
         self,
@@ -274,6 +287,117 @@ class ConversationService:
             return False
         return True
 
+    def is_idle_for_context_compress(self) -> bool:
+        """与闲时压缩：需无流式/ReAct、llm_busy 为 0，且对话相位为 idle。"""
+        if not self.is_idle_for_auto_memory():
+            return False
+        with self._dialogue_lock:
+            return self._dialogue_phase == "idle"
+
+    @staticmethod
+    def _normalize_checkpoint(ck: ContextCheckpoint, n_messages: int) -> ContextCheckpoint:
+        if ck.anchor_message_index > n_messages:
+            return ck.model_copy(update={"anchor_message_index": n_messages})
+        return ck
+
+    def _persist_context_checkpoint(self) -> None:
+        sid = self._active_id
+        if not sid:
+            return
+        try:
+            self._store.save_context_checkpoint(sid, self._context_checkpoint)
+        except Exception:
+            pass
+
+    def _maybe_compress_until_under_budget(
+        self, rebuild: Callable[[], list[dict[str, str]]]
+    ) -> None:
+        """在发主 LLM 前：整包 token 超阈值则多轮压缩检查点。"""
+        cc = self._cfg.context_compression
+        if not cc.enabled or not self._active_id:
+            return
+        budget = max(4096, int(cc.context_token_budget))
+        thresh = float(cc.pre_send_threshold)
+        with self._context_compress_lock:
+            for _ in range(8):
+                if estimate_tokens_messages(rebuild()) <= budget * thresh:
+                    return
+                raw_flat = raw_flat_from_stored_messages(self._messages)
+                with self.llm_busy():
+                    self._context_checkpoint = run_compression_round(
+                        self._cfg, raw_flat, self._context_checkpoint
+                    )
+                self._persist_context_checkpoint()
+
+    def _maybe_compress_history_until_budget(self) -> None:
+        """仅按 messages_for_llm() 估算（ReAct/闲时/发后等，不含主 system）。"""
+        cc = self._cfg.context_compression
+        if not cc.enabled or not self._active_id:
+            return
+        budget = max(4096, int(cc.context_token_budget))
+        thresh = float(cc.pre_send_threshold)
+
+        def hist() -> list[dict[str, str]]:
+            return list(self.messages_for_llm())
+
+        with self._context_compress_lock:
+            for _ in range(8):
+                if estimate_tokens_messages(hist()) <= budget * thresh:
+                    return
+                raw_flat = raw_flat_from_stored_messages(self._messages)
+                with self.llm_busy():
+                    self._context_checkpoint = run_compression_round(
+                        self._cfg, raw_flat, self._context_checkpoint
+                    )
+                self._persist_context_checkpoint()
+
+    def try_idle_context_compress(self) -> None:
+        """供内置调度线程：空闲且达间隔时若历史仍偏大则压一轮。"""
+        cc = self._cfg.context_compression
+        if not cc.enabled or cc.idle_compress_interval_sec <= 0:
+            return
+        if not self.is_idle_for_context_compress():
+            return
+        now = time.monotonic()
+        if now - self._last_idle_compress_mono < float(cc.idle_compress_interval_sec):
+            return
+        budget = max(4096, int(cc.context_token_budget))
+        if estimate_tokens_messages(self.messages_for_llm()) <= budget * float(
+            cc.pre_send_threshold
+        ):
+            return
+        with self._context_compress_lock:
+            raw_flat = raw_flat_from_stored_messages(self._messages)
+            with self.llm_busy():
+                self._context_checkpoint = run_compression_round(
+                    self._cfg, raw_flat, self._context_checkpoint
+                )
+            self._persist_context_checkpoint()
+        self._last_idle_compress_mono = time.monotonic()
+
+    def maybe_compress_post_reply_if_needed(self) -> None:
+        """可选：回复落盘后若历史仍超阈值则压一轮（需 post_reply_compress）。"""
+        cc = self._cfg.context_compression
+        if not cc.enabled or not cc.post_reply_compress or not self._active_id:
+            return
+        if not self.is_idle_for_context_compress():
+            return
+        self._maybe_compress_history_until_budget()
+
+    def build_persona_turn_call_messages(
+        self, system_block: str, user_text: str
+    ) -> list[dict[str, str]]:
+        """拟人模式一轮：与 build_safe_chat_call_messages 一致走发前压缩。"""
+
+        def rebuild() -> list[dict[str, str]]:
+            cm = [{"role": "system", "content": system_block}]
+            cm.extend(self.messages_for_llm())
+            cm.append({"role": "user", "content": user_text})
+            return cm
+
+        self._maybe_compress_until_under_budget(rebuild)
+        return rebuild()
+
     def set_persona_emit(self, fn: Any) -> None:
         """由 app.Api 注入：把拟人事件推到前端（如 pywebview evaluate_js）。"""
         self._persona_emit = fn
@@ -314,9 +438,7 @@ class ConversationService:
         ):
             self._ensure_chat_stream().start()
 
-    def build_safe_chat_call_messages(
-        self, user_text: str, *, memory_extra: str = ""
-    ) -> list[dict[str, str]]:
+    def _chat_system_block_with_extras(self, memory_extra: str = "") -> str:
         skills_prompt = build_safe_skills_prompt()
         extras = [action_card_system_hint()]
         if skills_prompt:
@@ -327,12 +449,37 @@ class ConversationService:
         system_block = build_system_block(extra_system="\n\n".join(extras))
         if memory_extra:
             system_block = system_block + "\n\n" + memory_extra
+        return system_block
+
+    def _assemble_safe_chat_call_messages(
+        self, user_text: str, *, memory_extra: str = ""
+    ) -> list[dict[str, str]]:
+        system_block = self._chat_system_block_with_extras(memory_extra)
         call_messages: list[dict[str, str]] = [
             {"role": "system", "content": system_block}
         ]
         call_messages.extend(self.messages_for_llm())
         call_messages.append({"role": "user", "content": user_text})
         return call_messages
+
+    def _assemble_followup_card_chat_messages(self, memory_extra: str) -> list[dict[str, str]]:
+        """卡片跟进：与对话模式相同 system，仅历史 messages_for_llm（无额外 user 行）。"""
+        system_block = self._chat_system_block_with_extras(memory_extra)
+        return [
+            {"role": "system", "content": system_block},
+            *self.messages_for_llm(),
+        ]
+
+    def build_safe_chat_call_messages(
+        self, user_text: str, *, memory_extra: str = ""
+    ) -> list[dict[str, str]]:
+        def rebuild() -> list[dict[str, str]]:
+            return self._assemble_safe_chat_call_messages(
+                user_text, memory_extra=memory_extra
+            )
+
+        self._maybe_compress_until_under_budget(rebuild)
+        return rebuild()
 
     def supersede_pending_cards_and_append_assistant(
         self, content: str, *, card: dict[str, Any]
@@ -382,11 +529,15 @@ class ConversationService:
         return list(self._messages)
 
     def messages_for_llm(self) -> list[dict[str, str]]:
-        """传给 LLM 时仅保留 role + content，避免携带 card 等 UI 字段。"""
-        return [
-            {"role": str(m.get("role") or "user"), "content": str(m.get("content") or "")}
-            for m in self._messages
-        ]
+        """传给 LLM：role+content，并应用 context_checkpoint（摘要 + anchor 尾部）；可选阶段 A 截断。"""
+        raw = raw_flat_from_stored_messages(self._messages)
+        tail = apply_checkpoint_to_flat(raw, self._context_checkpoint)
+        if self._cfg.context_compression.enabled:
+            tail = phase_a_trim_long_messages(
+                tail,
+                max_chars=int(self._cfg.context_compression.max_message_chars_phase_a),
+            )
+        return tail
 
     def consume_memory_bootstrap_for_persona(self) -> str:
         if self._memory_bootstrap_pending:
@@ -564,6 +715,8 @@ class ConversationService:
             self._meta = m
             self._messages = []
             self._memory_bootstrap_pending = True
+            self._context_checkpoint = ContextCheckpoint()
+            self._last_idle_compress_mono = 0.0
 
     def list_sessions(self) -> list[dict]:
         return [m.model_dump() for m in self._store.list_sessions()]
@@ -608,6 +761,12 @@ class ConversationService:
         self._meta = meta
         self._messages = messages
         self._memory_bootstrap_pending = True
+        ck = self._store.load_context_checkpoint(session_id)
+        self._context_checkpoint = self._normalize_checkpoint(
+            ck if ck is not None else ContextCheckpoint(),
+            len(self._messages),
+        )
+        self._last_idle_compress_mono = 0.0
         self._sync_persona_runtime()
         self._sync_chat_stream_runtime()
         self._reconcile_dialogue_state_after_load()
@@ -890,20 +1049,11 @@ class ConversationService:
         root = Path(ws).expanduser().resolve()
         if not root.is_dir():
             return f"工作区不存在或不是目录: {root}"
-        skills_prompt = build_safe_skills_prompt()
-        extras = [action_card_system_hint()]
-        if skills_prompt:
-            extras.insert(0, skills_prompt)
-        kb = self._kb_system_extra()
-        if kb:
-            extras.append(kb)
-        system_block = build_system_block(extra_system="\n\n".join(extras))
-        if memory_extra:
-            system_block = system_block + "\n\n" + memory_extra
-        call_messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_block}
-        ]
-        call_messages.extend(self.messages_for_llm())
+        def rebuild_fu() -> list[dict[str, str]]:
+            return self._assemble_followup_card_chat_messages(memory_extra)
+
+        self._maybe_compress_until_under_budget(rebuild_fu)
+        call_messages = rebuild_fu()
         try:
             with self.llm_busy():
                 reply = OllamaClient(self._llm).chat(
@@ -955,6 +1105,7 @@ class ConversationService:
                     return "团队会话元数据无效。"
                 if ts > m_count:
                     return f"team.models 仅 {m_count} 条，无法继续团队编排。"
+                self._maybe_compress_history_until_budget()
                 self.set_dialogue_phase("team_running")
                 try:
                     try:
@@ -962,7 +1113,7 @@ class ConversationService:
                             reply = run_team_turn(
                                 self._cfg,
                                 team_size=ts,
-                                prior_messages=list(self._messages[:-1]),
+                                prior_messages=list(self.messages_for_llm()[:-1]),
                                 user_text=user_text,
                                 memory_extra=memory_extra or None,
                                 slot_progress=self._on_team_slot_progress,
@@ -987,10 +1138,12 @@ class ConversationService:
                 )
                 self.set_dialogue_phase("react_running")
                 try:
+                    self._maybe_compress_history_until_budget()
+                    work = list(self.messages_for_llm())
                     with self.llm_busy():
                         ok, _out = run_react(
                             self._llm,
-                            self._messages,
+                            work,
                             workspace=str(root),
                             max_steps=self._meta.react_max_steps,
                             memory_bootstrap=memory_extra or None,
@@ -999,8 +1152,11 @@ class ConversationService:
                             stream_emit=self._react_stream_emit,
                             step_progress=self._on_react_step_index,
                         )
-                    if ok:
-                        self._parse_action_card_on_last_assistant(self._messages)
+                    if ok or (isinstance(_out, str) and "已中断" in _out):
+                        self._messages.clear()
+                        self._messages.extend(work)
+                        if ok:
+                            self._parse_action_card_on_last_assistant(self._messages)
                 finally:
                     self.set_dialogue_phase("idle")
             else:
@@ -1229,6 +1385,7 @@ class ConversationService:
                     "async": False,
                 }
             self._messages.append({"role": "user", "content": text})
+            self._maybe_compress_history_until_budget()
             self.set_dialogue_phase("team_running")
             try:
                 try:
@@ -1236,7 +1393,7 @@ class ConversationService:
                         reply = run_team_turn(
                             self._cfg,
                             team_size=ts,
-                            prior_messages=list(self._messages[:-1]),
+                            prior_messages=list(self.messages_for_llm()[:-1]),
                             user_text=text,
                             memory_extra=memory_extra or None,
                             slot_progress=self._on_team_slot_progress,
@@ -1298,10 +1455,12 @@ class ConversationService:
             try:
                 self.set_dialogue_phase("react_running")
                 try:
+                    self._maybe_compress_history_until_budget()
+                    work = list(self.messages_for_llm())
                     with self.llm_busy():
                         ok, _out = run_react(
                             llm_cfg,
-                            self._messages,
+                            work,
                             workspace=root_s,
                             max_steps=r_steps,
                             memory_bootstrap=mem_b,
@@ -1311,8 +1470,11 @@ class ConversationService:
                             cancel_check=lambda: self._react_cancel.is_set(),
                             step_progress=self._on_react_step_index,
                         )
-                    if ok:
-                        self._parse_action_card_on_last_assistant(self._messages)
+                    if ok or (isinstance(_out, str) and "已中断" in _out):
+                        self._messages.clear()
+                        self._messages.extend(work)
+                        if ok:
+                            self._parse_action_card_on_last_assistant(self._messages)
                     self._store.save_messages(self._active_id, self._messages)
                     self._meta, _ = self._store.load(self._active_id)
                 except Exception:

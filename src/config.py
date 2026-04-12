@@ -157,6 +157,11 @@ class MemoryConfig(BaseModel):
     extract_max_tokens: int = Field(default=4096, ge=256, le=131072)
     # 会话冷启动（build_memory_bootstrap_block）：为 True 时事件中排除 world_kind=fictional（v3.0）
     bootstrap_exclude_fictional_events: bool = True
+    # 冷启动单独展示「近期计划」摘要（future_planned / future_uncertain）
+    bootstrap_planned_summary_enabled: bool = True
+    bootstrap_planned_events_max: int = Field(default=3, ge=0, le=20)
+    # 为 True 时也对 world_kind=fictional 的事件写入 event_embeddings（默认 False，与生活事实向量隔离）
+    vector_index_fictional_events: bool = False
 
 
 class MemoryAutoExtractConfig(BaseModel):
@@ -178,6 +183,32 @@ class BuiltinSchedulerConfig(BaseModel):
     max_tasks_per_tick: int = Field(default=3, ge=1, le=20)
 
 
+class OutputReviewConfig(BaseModel):
+    """助手输出检查：引用链接、存疑标注、按节评审（可选异步小模型）。"""
+
+    enabled: bool = False
+    checker_model: str = ""
+    checker_max_tokens: int = Field(default=1024, ge=128, le=8192)
+    checker_max_input_chars: int = Field(default=12000, ge=1000, le=200_000)
+    checker_timeout_sec: float = Field(default=90.0, ge=5.0, le=600.0)
+    async_doubt_after_reply: bool = False
+    show_section_buttons: bool = True
+
+
+class ContextCompressionConfig(BaseModel):
+    """上文压缩：检查点 + 摘要；不修改 messages.json 全文，仅影响喂给模型的视图。"""
+
+    enabled: bool = False
+    context_token_budget: int = Field(default=32000, ge=4096, le=500_000)
+    pre_send_threshold: float = Field(default=0.85, ge=0.3, le=0.99)
+    max_summary_chars: int = Field(default=8000, ge=500, le=200_000)
+    summary_max_tokens: int = Field(default=1024, ge=128, le=8192)
+    # 单条 role+content 在阶段 A 中的硬截断上限（字符）
+    max_message_chars_phase_a: int = Field(default=24000, ge=2000, le=500_000)
+    idle_compress_interval_sec: int = Field(default=0, ge=0, le=86400)
+    post_reply_compress: bool = False
+
+
 class RuyiConfig(BaseModel):
     version: int = 1
     app: AppConfig = Field(default_factory=AppConfig)
@@ -194,6 +225,10 @@ class RuyiConfig(BaseModel):
     builtin_scheduler: BuiltinSchedulerConfig = Field(
         default_factory=BuiltinSchedulerConfig
     )
+    context_compression: ContextCompressionConfig = Field(
+        default_factory=ContextCompressionConfig
+    )
+    output_review: OutputReviewConfig = Field(default_factory=OutputReviewConfig)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

@@ -106,15 +106,21 @@ def load_bootstrap_memory_split(
     facts_limit: int,
     events_limit: int,
     relations_limit: int,
-) -> tuple[list[dict], list[dict], list[dict]]:
-    """冷启动读路径：事实/关系与 load_recent_memory_split 相同；事件可按配置排除 fictional（v3.0）。"""
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """冷启动读路径：返回 (facts, events, planned_events, relations)。
+
+    planned_events 仅在 bootstrap_planned_summary_enabled 且 planned_events_max>0 时可能非空；
+    此时 events 为主叙事区（不含 future_planned/future_uncertain），避免与「近期计划」重复。
+    """
     from src.config import load_config
     from src.storage.memory_sqlite import (
         connect_memory_db,
         ensure_schema,
+        sqlite_read_planned_events_for_bootstrap,
         sqlite_read_recent_facts,
         sqlite_read_recent_events,
         sqlite_read_recent_events_for_bootstrap,
+        sqlite_read_recent_events_main_for_bootstrap,
         sqlite_read_recent_relations,
         sqlite_row_count,
     )
@@ -125,6 +131,11 @@ def load_bootstrap_memory_split(
     rl = max(1, int(relations_limit))
     ex_fic = cfg.memory.bootstrap_exclude_fictional_events
     exclude_wk = frozenset({"fictional"}) if ex_fic else frozenset()
+    split_planned = (
+        cfg.memory.bootstrap_planned_summary_enabled
+        and int(cfg.memory.bootstrap_planned_events_max) > 0
+    )
+    plim = int(cfg.memory.bootstrap_planned_events_max) if split_planned else 0
 
     if cfg.memory.backend in ("dual", "sqlite"):
         conn = connect_memory_db(store.root, cfg)
@@ -132,25 +143,48 @@ def load_bootstrap_memory_split(
             ensure_schema(conn)
             if sqlite_row_count(conn) > 0:
                 facts = sqlite_read_recent_facts(conn, fl)
-                if ex_fic:
+                if split_planned:
+                    events = sqlite_read_recent_events_main_for_bootstrap(
+                        conn,
+                        el,
+                        exclude_world_kinds=exclude_wk,
+                        exclude_planned_temporal=True,
+                    )
+                    planned = sqlite_read_planned_events_for_bootstrap(
+                        conn, plim, exclude_world_kinds=exclude_wk
+                    )
+                elif ex_fic:
                     events = sqlite_read_recent_events_for_bootstrap(
                         conn, el, exclude_world_kinds=exclude_wk
                     )
+                    planned = []
                 else:
                     events = sqlite_read_recent_events(conn, el)
+                    planned = []
                 relations = sqlite_read_recent_relations(conn, rl)
-                return (facts, events, relations)
+                return (facts, events, planned, relations)
         finally:
             conn.close()
     facts = store.read_recent("facts", fl)
-    if ex_fic:
+    if split_planned:
+        events = store.read_recent_events_main_for_bootstrap(
+            el,
+            exclude_world_kinds=exclude_wk,
+            exclude_planned_temporal=True,
+        )
+        planned = store.read_recent_planned_events_for_bootstrap(
+            plim, exclude_world_kinds=exclude_wk
+        )
+    elif ex_fic:
         events = store.read_recent_events_for_bootstrap(
             el, exclude_world_kinds=exclude_wk
         )
+        planned = []
     else:
         events = store.read_recent("events", el)
+        planned = []
     relations = store.read_recent("relations", rl)
-    return (facts, events, relations)
+    return (facts, events, planned, relations)
 
 
 def _format_relation_line(r: dict) -> str:
@@ -172,6 +206,24 @@ def _format_relation_line(r: dict) -> str:
             return f"- {ea} -> {eb}：{label}（{body}）"
     rel = r.get("relation") or ""
     return f"- {ea} -> {eb}：{rel}（{expl}）"
+
+
+def _format_bootstrap_planned_lines(planned: list[dict]) -> str:
+    """冷启动「近期计划」块：一行一条，缩略 action/result。"""
+    if not planned:
+        return ""
+    lines: list[str] = ["【近期计划（摘要）】"]
+    for e in planned:
+        t = (e.get("time") or "").strip()
+        action = (e.get("action") or "").strip()
+        result = (e.get("result") or "").strip()
+        one = action or result
+        if len(one) > 120:
+            one = one[:117] + "…"
+        tim = f"[{t}] " if t else ""
+        lines.append(f"- {tim}{one}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def format_memory_entries(
@@ -271,17 +323,21 @@ def build_memory_bootstrap_block(
     会话冷启动：拼一段可注入 system 的「已知长期记忆」。
     若无任何条目则返回空串（调用方可不追加）。
     事件默认排除 world_kind=fictional（见 memory.bootstrap_exclude_fictional_events）。
+    可选「近期计划」摘要见 memory.bootstrap_planned_summary_enabled。
     """
     st = store or default_store()
-    facts, events, relations = load_bootstrap_memory_split(
+    facts, events, planned, relations = load_bootstrap_memory_split(
         st, facts_limit, events_limit, relations_limit
     )
-    if not facts and not events and not relations:
+    if not facts and not events and not relations and not planned:
         return ""
 
-    body = format_memory_entries(facts, events, relations, empty_hint="")
-    if not body.strip():
+    main = format_memory_entries(facts, events, relations, empty_hint="").strip()
+    planned_txt = _format_bootstrap_planned_lines(planned).strip()
+    if not main and not planned_txt:
         return ""
+
+    body = (main + "\n\n" + planned_txt if main and planned_txt else (main or planned_txt)).strip()
 
     header = (
         "## 已保存的长期记忆（跨会话）\n"
@@ -421,14 +477,20 @@ def search_memory_semantic(
     query: str,
     *,
     top_k: int = 8,
+    include_events: bool = True,
+    include_fictional_events: bool = False,
     store: MemoryStore | None = None,
 ) -> str:
-    """对重要事实的向量索引做语义检索（Ollama embedding + memory.db）。"""
+    """对事实与（可选）事件的向量索引做语义检索（Ollama embedding + memory.db）。
+
+    include_fictional_events：为 True 时事件向量命中可含 world_kind=fictional（默认 False，与生活向量化策略一致）。
+    """
     from src.config import embedding_http_llm_cfg, load_config
     from src.llm.ollama import ollama_embed_one
     from src.storage.memory_sqlite import (
         connect_memory_db,
         ensure_schema,
+        search_event_embeddings,
         search_fact_embeddings,
     )
 
@@ -450,19 +512,39 @@ def search_memory_semantic(
         llm_e = embedding_http_llm_cfg(cfg)
         model = cfg.embedding.model.strip()
         qv = ollama_embed_one(llm_e, model, q)
-        hits = search_fact_embeddings(conn, qv, top_k=top_k)
+        tk = max(1, int(top_k))
+        fact_hits = search_fact_embeddings(conn, qv, top_k=tk)
+        event_hits = (
+            search_event_embeddings(
+                conn,
+                qv,
+                top_k=tk,
+                include_fictional=include_fictional_events,
+            )
+            if include_events
+            else []
+        )
     finally:
         conn.close()
-    if not hits:
-        return (
-            "向量库中暂无事实条目或未命中。请先抽取 tier=important 的事实，"
-            "并确认 memory.vector_enabled 已开启且 embedding 调用成功。"
-        )
-    lines = ["【事实·语义相近】"]
-    for fid, score, et in hits:
-        snippet = et if len(et) <= 240 else et[:237] + "…"
-        lines.append(f"- score={score:.4f} id={fid} {snippet}")
-    return "\n".join(lines)
+    parts: list[str] = []
+    if fact_hits:
+        lines = ["【事实·语义相近】"]
+        for fid, score, et in fact_hits:
+            snippet = et if len(et) <= 240 else et[:237] + "…"
+            lines.append(f"- score={score:.4f} id={fid} {snippet}")
+        parts.append("\n".join(lines))
+    if include_events and event_hits:
+        lines = ["【事件·语义相近】"]
+        for eid, score, et in event_hits:
+            snippet = et if len(et) <= 240 else et[:237] + "…"
+            lines.append(f"- score={score:.4f} id={eid} {snippet}")
+        parts.append("\n".join(lines))
+    if parts:
+        return "\n\n".join(parts)
+    return (
+        "向量库中暂无命中。请先抽取记忆（重要事实、事件），"
+        "并确认 memory.vector_enabled 已开启且 embedding 调用成功。"
+    )
 
 
 def search_history(

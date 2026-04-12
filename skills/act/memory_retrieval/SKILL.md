@@ -24,7 +24,7 @@ description: |
 |------|------|
 | 看最近摘要 | `browse_memory` |
 | 关键词搜事实/事件/关系（FTS 或 JSONL 子串） | `search_memory` |
-| 语义近义搜重要事实 | `search_memory_semantic`（需 `memory.vector_enabled` + Ollama embedding） |
+| 语义近义搜事实与事件 | `search_memory_semantic`（需 `memory.vector_enabled` + Ollama；可选 `include_fictional_events`） |
 | 搜已索引的会话消息 | `search_history`（需 `memory.messages_index_enabled`） |
 
 下文「处理流程」「输入参数」等保留为 **无宿主工具时的通用 RAG 设计参考**；在如意72 内以工具说明与配置为准。
